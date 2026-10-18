@@ -18,6 +18,7 @@ It is a thin client of the public Rowsmith API, free and rate-limited.
    curl -s https://testdata-api.re-jam620.workers.dev/v1/sandbox/$ID/charges -H 'content-type: application/json' \
      -d '{"amount":1999,"currency":"usd","card":"4242424242424242"}'
    ```
+   Python's standard-library urllib is blocked by Cloudflare before it reaches the API (403, error code 1010) when it sends its default User-Agent. Set your own, e.g. `User-Agent: my-tests/1.0`. In our tests on 2026-10-18, requests, httpx, aiohttp, Node and curl worked with their defaults.
 
 - Free, rate-limited, no account, no API key.
 - The same schema and seed give byte-identical output for the same generator version.
@@ -101,6 +102,7 @@ Example call:
 `schema` (path to a JSON file holding a columns array or a full request), `out` (the file to write), and optional
 `seed`, `rows` and `format` (csv, json or sql), which replace the file's values when given. On any answer other
 than 200 the step fails with the service's error and its `next` step. Nothing is cached, and no key is needed.
+Use the tag `meiorz/rowsmith-mcp/fixtures@v0.2.2` (or @main to try the latest).
 
 ```yaml
 name: fixtures
@@ -110,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: meiorz/rowsmith-mcp/fixtures@main
+      - uses: meiorz/rowsmith-mcp/fixtures@v0.2.2
         with:
           schema: test/fixtures/orders.schema.json
           seed: "42"
@@ -130,6 +132,16 @@ with `test/fixtures/orders.schema.json`:
 The same schema and seed give byte-identical output for the same generator version, so the file is the same on
 every run until the generator version changes. The step's `generator-version` output reports the version used.
 Each run counts against the daily limit of the runner's address. GitHub-hosted runners share addresses, so the limit can be reached by other users' runs.
+
+Optional `extra-header` (on @main; not in v0.2.2) adds one request header, as `Name: value` in printable ASCII. It
+is empty by default, which sends no extra header.
+
+`.github/workflows/canary.yml` is our hourly uptime check: it sends the fixed canary request (the golden request,
+exactly these body bytes) with `x-rowsmith-canary: 1` and fails unless the answer's sha256 is
+`50db558e2e8c54353ac38a3125deb91642895db302eec334afeec2406537f821`. The service treats a call as its canary only with
+that header and that exact body; any other call with the header is an ordinary call. The workflow also probes
+Python's urllib with its default User-Agent (an ordinary call, without the canary header) and writes the result
+(blocked or passing) to the job summary, without failing the job.
 
 ## Limits and terms
 Up to 500 rows and 50 columns per call, with daily limits per caller; over a limit the tool returns the service's

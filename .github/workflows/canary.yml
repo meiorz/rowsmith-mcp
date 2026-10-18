@@ -1,0 +1,72 @@
+# Our own uptime check for the Rowsmith service. Every hour it sends the golden request (all column types, rows 5,
+# seed 42, csv; the same body as ALL_TYPES_REQUEST in the service's test/helpers.ts) and checks that the answer is
+# byte-identical to the recorded output. The call carries x-rowsmith-canary: 1 and exactly the fixed canary request
+# bytes (no trailing newline; their sha256 is CANARY_BODY_SHA256 in the service's src/index.ts), so the service counts
+# it as our canary: it is left out of the public figures and only feeds the daily canary counters that /status.json
+# reports as uptime. The header with any other body changes nothing. It still counts against the runner's daily limit.
+name: canary
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: canary
+  cancel-in-progress: false
+jobs:
+  golden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ROWSMITH_URL: https://testdata-api.re-jam620.workers.dev
+      GOLDEN_SHA256: 50db558e2e8c54353ac38a3125deb91642895db302eec334afeec2406537f821
+    steps:
+      - name: Send the golden request and check its sha256
+        shell: bash
+        run: |
+          set -euo pipefail
+          # printf, not a heredoc: the body must be exactly these bytes, with no trailing newline.
+          printf '%s' '{"table":"orders","rows":5,"seed":42,"format":"csv","columns":[{"name":"id","type":"uuid"},{"name":"order_no","type":"sequence","prefix":"ord_","pad":4},{"name":"qty","type":"integer","min":1,"max":9},{"name":"total_usd","type":"decimal","min":0.01,"max":500,"scale":2},{"name":"paid","type":"boolean","p_true":0.8},{"name":"status","type":"enum","values":["paid","refunded","partially_refunded"],"weights":[8,1,1]},{"name":"placed_on","type":"date","from":"2026-01-01","to":"2026-12-31"},{"name":"placed_at","type":"datetime","from":"2026-03-08T00:00:00Z","to":"2026-03-09T00:00:00Z"},{"name":"customer","type":"full_name"},{"name":"email","type":"email","null_rate":0.1},{"name":"phone","type":"phone"},{"name":"card","type":"test_card"},{"name":"ssn","type":"ssn_invalid"},{"name":"iban","type":"iban_invalid"},{"name":"note","type":"text","min_words":2,"max_words":6}]}' > golden.json
+          echo "body sha256 $(sha256sum golden.json | cut -d' ' -f1) (canary body)"
+          status="$(curl -sS -o body.csv -w '%{http_code}' --max-time 60 \
+            -H 'content-type: application/json' -H 'x-rowsmith-canary: 1' -H 'user-agent: rowsmith-canary' \
+            --data-binary @golden.json "$ROWSMITH_URL/v1/generate" || true)"
+          if [ "$status" != "200" ]; then
+            echo "::error title=Rowsmith canary::HTTP ${status:-000} from /v1/generate: $(head -c 500 body.csv 2>/dev/null || true)"
+            exit 1
+          fi
+          got="$(sha256sum body.csv | cut -d' ' -f1)"
+          if [ "$got" != "$GOLDEN_SHA256" ]; then
+            echo "::error title=Rowsmith canary::golden output changed: sha256 $got, expected $GOLDEN_SHA256"
+            exit 1
+          fi
+          echo "golden request OK (sha256 $got)"
+      # A second probe, beside the golden check: Python's urllib with its default User-Agent on GET /v1/types. Its
+      # outcome goes to the job summary only; this step never fails the job. It sends no canary header: it is an
+      # ordinary call from the runner's address. A 403 here comes from Cloudflare before the request reaches the
+      # Worker, so the Worker counts nothing for it.
+      - name: Probe Python urllib's default User-Agent (reported, never fails the job)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          code="$(python3 - <<'PY' || true
+          import os, urllib.error, urllib.request
+          req = urllib.request.Request(os.environ["ROWSMITH_URL"] + "/v1/types",
+                                       headers={"User-Agent": "Python-urllib/3.12"})
+          try:
+              print(urllib.request.urlopen(req, timeout=30).status)
+          except urllib.error.HTTPError as e:
+              print(e.code)
+          except Exception:
+              print("000")
+          PY
+          )"
+          case "$code" in
+            403) result="blocked" ;;
+            200) result="passing" ;;
+            *) result="unexpected" ;;
+          esac
+          echo "### Python urllib probe: $result (HTTP ${code:-000})" >> "$GITHUB_STEP_SUMMARY"
+          echo "urllib probe: $result (HTTP ${code:-000})"

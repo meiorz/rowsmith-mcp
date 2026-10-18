@@ -1,6 +1,6 @@
 {
   "name": "rowsmith-mcp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "MCP server for Rowsmith: generated fake test data (CSV, JSON, SQL) from a schema. Free, rate-limited.",
   "author": "meiorz",
   "homepage": "https://testdata-api.re-jam620.workers.dev/terms",

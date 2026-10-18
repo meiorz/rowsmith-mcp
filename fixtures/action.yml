@@ -27,6 +27,10 @@ inputs:
     description: Rowsmith API base URL.
     required: false
     default: https://testdata-api.re-jam620.workers.dev
+  extra-header:
+    description: "Optional. One extra request header, as 'Name: value' (printable ASCII). Empty by default, which sends no extra header."
+    required: false
+    default: ""
 outputs:
   generator-version:
     description: The generator version that made the file (X-Generator-Version).
@@ -43,12 +47,24 @@ runs:
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_OUT: ${{ inputs.out }}
         INPUT_URL: ${{ inputs.url }}
+        INPUT_EXTRA_HEADER: ${{ inputs.extra-header }}
       run: |
         set -euo pipefail
         tmp="$(mktemp -d)"
         node "$GITHUB_ACTION_PATH/fixtures.mjs" body > "$tmp/body.json"
+        extra=()
+        if [ -n "${INPUT_EXTRA_HEADER:-}" ]; then
+          # One line of printable ASCII only (C locale): =~ anchors the whole value, so a CR or LF cannot add a
+          # second header.
+          header_re='^[A-Za-z0-9-]{1,64}: [ -~]*$'
+          if ! (export LC_ALL=C; [[ ${#INPUT_EXTRA_HEADER} -le 330 && "$INPUT_EXTRA_HEADER" =~ $header_re ]]); then
+            echo "::error title=Rowsmith fixtures::extra-header must look like 'Name: value' in printable ASCII."
+            exit 1
+          fi
+          extra=(-H "$INPUT_EXTRA_HEADER")
+        fi
         status="$(curl -sS -o "$tmp/response" -D "$tmp/headers" -w '%{http_code}' \
-          -H 'content-type: application/json' -H 'user-agent: rowsmith-fixtures-action' \
+          -H 'content-type: application/json' -H 'user-agent: rowsmith-fixtures-action' ${extra[@]+"${extra[@]}"} \
           --data-binary @"$tmp/body.json" "${INPUT_URL%/}/v1/generate" || true)"
         if [ "$status" != "200" ]; then
           echo "::error title=Rowsmith fixtures::$(node "$GITHUB_ACTION_PATH/fixtures.mjs" fail "${status:-000}" "$tmp/response")"
