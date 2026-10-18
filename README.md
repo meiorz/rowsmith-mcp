@@ -98,3 +98,5 @@ whoever runs the agent.
 
 Terms of use: https://testdata-api.re-jam620.workers.dev/terms · Data notice:
 https://testdata-api.re-jam620.workers.dev/privacy · Published by meiorz · Contact: business@meiorz.tech
+
+Privacy, data and deletion requests: business@meiorz.tech only, never in a public issue.

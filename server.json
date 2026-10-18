@@ -3,12 +3,16 @@
   "name": "io.github.meiorz/rowsmith",
   "title": "Rowsmith test data",
   "description": "Fake test data (CSV, JSON, SQL) from a schema. Reserved-range identifiers; reproducible by seed.",
-  "version": "0.2.0",
+  "repository": {
+    "url": "https://github.com/meiorz/rowsmith-mcp",
+    "source": "github"
+  },
+  "version": "0.2.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "rowsmith-mcp",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "transport": {
         "type": "stdio"
       },

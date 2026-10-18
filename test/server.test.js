@@ -225,9 +225,14 @@ test("server.json and the package description describe only what is live with th
   for (const f of ["../server.json", "../package.json"]) {
     const text = await readFile(new URL(f, import.meta.url), "utf8");
     assert.doesNotMatch(text, /sandbox|payment|charge|refund/i, f);
-    // server.json pins the registry entry (0.2.0); package.json may carry README-only patch releases (0.2.x).
-    assert.match(text, f.endsWith("server.json") ? /"version": "0\.2\.0"/ : /"version": "0\.2\.\d+"/, f);
+    assert.match(text, /"version": "0\.2\.\d+"/, f);
   }
+  // The registry entry names a published npm version; server.json follows package.json.
+  const server = JSON.parse(await readFile(new URL("../server.json", import.meta.url), "utf8"));
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(server.version, pkg.version);
+  assert.equal(server.packages[0].version, pkg.version);
+  assert.equal(server.repository?.url, "https://github.com/meiorz/rowsmith-mcp");
 });
 
 test("tool descriptions use process wording only and no processor naming", async () => {
