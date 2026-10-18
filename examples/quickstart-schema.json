@@ -1,0 +1,1 @@
+[{"name":"order_id","type":"sequence","prefix":"ord_","pad":4},{"name":"email","type":"email"},{"name":"total_usd","type":"decimal","min":1,"max":500}]

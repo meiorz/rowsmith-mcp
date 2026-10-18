@@ -1,0 +1,61 @@
+name: Rowsmith fixtures
+description: Write a fixture file of generated fake test data (CSV, JSON or SQL) from a schema, with one call to the free Rowsmith API.
+author: meiorz
+branding:
+  icon: database
+  color: green
+inputs:
+  schema:
+    description: Path to a JSON file holding a columns array, or a full /v1/generate request object.
+    required: true
+  seed:
+    description: Seed. The same schema and seed give byte-identical output for the same generator version. Defaults to the file's seed, else 1.
+    required: false
+    default: ""
+  rows:
+    description: Number of rows, 1 to 500. Defaults to the file's rows, else 100.
+    required: false
+    default: ""
+  format:
+    description: csv, json or sql. Defaults to the file's format, else csv.
+    required: false
+    default: ""
+  out:
+    description: Path of the file to write.
+    required: true
+  url:
+    description: Rowsmith API base URL.
+    required: false
+    default: https://testdata-api.re-jam620.workers.dev
+outputs:
+  generator-version:
+    description: The generator version that made the file (X-Generator-Version).
+    value: ${{ steps.generate.outputs.generator-version }}
+runs:
+  using: composite
+  steps:
+    - id: generate
+      shell: bash
+      env:
+        INPUT_SCHEMA: ${{ inputs.schema }}
+        INPUT_SEED: ${{ inputs.seed }}
+        INPUT_ROWS: ${{ inputs.rows }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_OUT: ${{ inputs.out }}
+        INPUT_URL: ${{ inputs.url }}
+      run: |
+        set -euo pipefail
+        tmp="$(mktemp -d)"
+        node "$GITHUB_ACTION_PATH/fixtures.mjs" body > "$tmp/body.json"
+        status="$(curl -sS -o "$tmp/response" -D "$tmp/headers" -w '%{http_code}' \
+          -H 'content-type: application/json' -H 'user-agent: rowsmith-fixtures-action' \
+          --data-binary @"$tmp/body.json" "${INPUT_URL%/}/v1/generate" || true)"
+        if [ "$status" != "200" ]; then
+          echo "::error title=Rowsmith fixtures::$(node "$GITHUB_ACTION_PATH/fixtures.mjs" fail "${status:-000}" "$tmp/response")"
+          exit 1
+        fi
+        mkdir -p "$(dirname "$INPUT_OUT")"
+        mv "$tmp/response" "$INPUT_OUT"
+        version="$(grep -i '^x-generator-version:' "$tmp/headers" | tr -d '\r' | awk '{print $2}' || true)"
+        echo "generator-version=${version}" >> "$GITHUB_OUTPUT"
+        echo "Wrote $INPUT_OUT ($(wc -c < "$INPUT_OUT") bytes, generator ${version:-unknown}). Generated fake test data; terms: ${INPUT_URL%/}/terms"

@@ -134,7 +134,8 @@ export async function generate(args) {
   if (!r.ok) return fail(r.text);
   const provenance =
     `(generator ${r.headers.get("x-generator-version")}, ${r.headers.get("x-prng")}, seed ${r.headers.get("x-seed")}; ` +
-    `generated fake data, see ${BASE_URL}/terms)`;
+    `generated fake data, see ${BASE_URL}/terms)\n` +
+    (chaos?.empty_result ? "Reproduce: not available, because empty_result was requested." : reproduceCurl(request, r.headers));
   if (target === undefined) return { content: [{ type: "text", text: r.text }, { type: "text", text: provenance }] };
 
   try {
@@ -153,6 +154,17 @@ export async function generate(args) {
     provenance,
   ].join("\n");
   return { content: [{ type: "text", text: summary }] };
+}
+
+/**
+ * The exact curl that regenerates the same bytes: the request as sent, with the seed the service used and the
+ * generator version pinned (a version the service no longer serves is refused with 409, never answered with
+ * different bytes). Chaos options are left out. Single quotes in values are escaped for a POSIX shell.
+ */
+export function reproduceCurl(request, headers) {
+  const body = { ...request, seed: Number(headers.get("x-seed")), version: headers.get("x-generator-version") };
+  const json = JSON.stringify(body).replace(/'/g, "'\\''");
+  return `Reproduce: curl -s ${BASE_URL}/v1/generate -H 'content-type: application/json' -d '${json}'`;
 }
 
 export async function listTypes() {
@@ -289,19 +301,26 @@ export function createServer({ sandbox = false, sandboxCheckFailed = false } = {
     {
       title: "Generate test data",
       description:
-        "Generate realistic fake test data (CSV, JSON or SQL INSERTs) from a table schema. Free and rate-limited: up to " +
+        "Generate realistic fake test data (CSV, JSON or SQL INSERTs) from a table schema. Use it first, when you need " +
+        "rows for fixtures, seed data or tests (list_column_types gives each type's options). Next: invalid_values for " +
+        `values your code should reject${sandbox ? ", then sandbox_create and sandbox_payments to test a payment flow" : ""}. ` +
+        "Free and rate-limited: up to " +
         "500 rows and 50 columns per call. No real person's data is used as input and no record is derived from a real " +
         "person; emails, phones, card numbers, SSN-shaped and IBAN-shaped values come only from reserved or invalid " +
         "ranges. The same schema and seed give byte-identical output for the same generator version (sent as " +
         "x-generator-version). For more than about 50 rows, pass output_path to write a file instead of returning the " +
-        "data. Send schemas only, never real data.",
+        "data. The result ends with a curl that regenerates the same bytes. Send schemas only, never real data.",
       inputSchema: generateInput,
     },
     generate,
   );
   server.registerTool(
     "list_column_types",
-    { title: "List column types", description: "List the supported column types and the options each accepts.", inputSchema: {} },
+    {
+      title: "List column types",
+      description: "List the supported column types and the options each accepts. Use it before generate_test_data when you need a type's options.",
+      inputSchema: {},
+    },
     listTypesTool,
   );
   server.registerTool(
@@ -311,7 +330,8 @@ export function createServer({ sandbox = false, sandboxCheckFailed = false } = {
       description:
         "Deliberately invalid TEST DATA values (malformed emails, declining or Luhn-invalid card numbers, malformed " +
         "addresses, Unicode edge cases, invalid IBAN and SSN shapes), each with the reason it is invalid. Same seed, " +
-        "same output for the same catalogue version.",
+        "same output for the same catalogue version. Use it after generate_test_data, to test that your validation " +
+        `rejects bad input.${sandbox ? " Next: sandbox_create, then sandbox_payments, to test a payment flow." : ""}`,
       inputSchema: invalidInput,
     },
     invalidValues,
@@ -323,7 +343,7 @@ export function createServer({ sandbox = false, sandboxCheckFailed = false } = {
       title: "Create payment sandbox",
       description:
         "Create a fake card-processor sandbox (TEST DATA, no money, no payment provider). Returns its sbx_ id. " +
-        "Deleted 1 hour after creation.",
+        "Deleted 1 hour after creation. Use it to start a payment test; next, call sandbox_payments with the returned id.",
       inputSchema: sandboxCreateInput,
     },
     sandboxCreate,
@@ -335,7 +355,7 @@ export function createServer({ sandbox = false, sandboxCheckFailed = false } = {
       description:
         "Charge, refund, list, get or reset in a payment sandbox. Accepts only card numbers from Stripe's published " +
         "testing list; any other card-like number is refused. Declines return code and decline_code. Same seed and " +
-        "call order, same objects for the same sandbox version.",
+        "call order, same objects for the same sandbox version. Use it after sandbox_create, with that sandbox's id.",
       inputSchema: sandboxInput,
     },
     sandboxPayments,

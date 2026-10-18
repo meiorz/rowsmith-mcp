@@ -1,0 +1,23 @@
+name: fixtures smoke
+# Run by hand to check the fixtures Action end to end (each run is one call to the service).
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: fx
+        uses: ./fixtures
+        with:
+          schema: examples/quickstart-schema.json
+          seed: "42"
+          rows: "20"
+          format: csv
+          out: orders.csv
+      - run: |
+          head -3 orders.csv
+          test "$(sed -n 2p orders.csv | cut -d, -f1)" = "ord_0001"
+          echo "generator ${{ steps.fx.outputs.generator-version }}"

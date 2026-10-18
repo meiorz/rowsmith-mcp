@@ -44,14 +44,22 @@ It is a thin client of the public Rowsmith API, free and rate-limited.
 At startup the server reads `/pricing.json` once (30 s timeout, cached for the process) and lists the
 two sandbox tools only if the service advertises `/v1/sandbox` there. If that request fails, the sandbox tools stay
 hidden and the server's instructions and `list_column_types` output say why; restart to check again. Tool-definition size, measured as characters of
-the `tools/list` JSON (names, titles, descriptions and input schemas) divided by 4: 3 tools, about 1069 tokens
-(4273 characters); 5 tools, about 1610 tokens (6437 characters). Measure with `node scripts/tool-tokens.js`.
+the `tools/list` JSON (names, titles, descriptions and input schemas) divided by 4: 3 tools, about 1163 tokens
+(4650 characters); 5 tools, about 1771 tokens (7083 characters). Measure with `node scripts/tool-tokens.js`.
 
 For more than about 50 rows, pass `output_path`: the server writes the file and returns a summary (rows, bytes,
 sha256, the header line) instead of putting the data in the model's context. Files can only be written inside the
 write root: the server's working directory by default, or `ROWSMITH_OUT_DIR` when set (which moves or narrows it).
 Paths with `..` segments or outside the root are refused, and an existing file is replaced only with
 `overwrite: true`.
+
+The tools form a chain, and each description says which comes next: `generate_test_data` first (with
+`list_column_types` for a type's options), then `invalid_values` for values your code should reject, then
+`sandbox_create` and `sandbox_payments` for a payment flow when they are listed.
+
+Every `generate_test_data` result ends with a reproduce line: the exact curl, with the seed the service used and
+the generator version pinned, that regenerates the same bytes. A version the service no longer serves is refused
+with 409, never answered with different bytes. Chaos options are left out of it.
 
 `chaos` makes the service misbehave on purpose, to test error handling: `fail` (e.g. `"429@0.2"`; also 500, 503),
 `latency_ms` (at most 3000), `empty_result`, `attempt`. Outcomes are fixed by seed and attempt.
@@ -87,6 +95,41 @@ Example call:
                { "name": "email", "type": "email" },
                { "name": "total_usd", "type": "decimal", "min": 1, "max": 500 } ] }
 ```
+
+## GitHub Action: fixtures in CI
+`fixtures/action.yml` is a composite action that writes a fixture file with one call to `/v1/generate`. Inputs:
+`schema` (path to a JSON file holding a columns array or a full request), `out` (the file to write), and optional
+`seed`, `rows` and `format` (csv, json or sql), which replace the file's values when given. On any answer other
+than 200 the step fails with the service's error and its `next` step. Nothing is cached, and no key is needed.
+
+```yaml
+name: fixtures
+on: [push]
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: meiorz/rowsmith-mcp/fixtures@main
+        with:
+          schema: test/fixtures/orders.schema.json
+          seed: "42"
+          rows: "200"
+          format: csv
+          out: test/fixtures/orders.csv
+      - run: npm test
+```
+
+with `test/fixtures/orders.schema.json`:
+```json
+[{ "name": "order_id", "type": "sequence", "prefix": "ord_", "pad": 4 },
+ { "name": "email", "type": "email" },
+ { "name": "total_usd", "type": "decimal", "min": 1, "max": 500 }]
+```
+
+The same schema and seed give byte-identical output for the same generator version, so the file is the same on
+every run until the generator version changes. The step's `generator-version` output reports the version used.
+Each run counts against the daily limit of the runner's address. GitHub-hosted runners share addresses, so the limit can be reached by other users' runs.
 
 ## Limits and terms
 Up to 500 rows and 50 columns per call, with daily limits per caller; over a limit the tool returns the service's
