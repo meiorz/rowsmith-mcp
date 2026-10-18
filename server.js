@@ -8,7 +8,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 export const BASE_URL = (process.env.ROWSMITH_URL ?? "https://testdata-api.re-jam620.workers.dev").replace(/\/+$/, "");
-const VERSION = "0.2.0";
+const VERSION = "0.4.0";
 const TIMEOUT_MS = 30_000;
 
 const TYPES =
@@ -221,9 +221,12 @@ export async function generate(args) {
     body: JSON.stringify(request),
   });
   if (!r.ok) return fail(r.text);
+  // The service's X-Output-SHA256 (sha256 of the body bytes), for golden manifests; computed here when absent.
+  const sha256 = r.headers.get("x-output-sha256") ?? createHash("sha256").update(r.text, "utf8").digest("hex");
   const provenance =
     `(generator ${r.headers.get("x-generator-version")}, ${r.headers.get("x-prng")}, seed ${r.headers.get("x-seed")}; ` +
     `generated fake data, see ${BASE_URL}/terms)\n` +
+    (target === undefined ? `Output sha256 ${sha256}\n` : "") +
     schemaLine(r.headers) +
     (chaos?.empty_result ? "Reproduce: not available, because empty_result was requested." : reproduceCurl(request, r.headers));
   if (target === undefined) return { content: [{ type: "text", text: r.text }, { type: "text", text: provenance }] };
@@ -236,7 +239,6 @@ export async function generate(args) {
     return fail(`Could not write ${target}: ${e instanceof Error ? e.message : String(e)}`);
   }
   const bytes = Buffer.byteLength(r.text, "utf8");
-  const sha256 = createHash("sha256").update(r.text, "utf8").digest("hex");
   const summary = [
     `Wrote ${request.rows ?? 100} rows (${bytes} bytes) to ${target}`,
     `sha256 ${sha256}`,
@@ -400,7 +402,7 @@ export function createServer({ sandbox = false, sandboxCheckFailed = false } = {
         "person; emails, phones, card numbers, SSN-shaped and IBAN-shaped values come only from reserved or invalid " +
         "ranges. The same schema and seed give byte-identical output for the same generator version (sent as " +
         "x-generator-version). For more than about 50 rows, pass output_path to write a file instead of returning the " +
-        "data. The result ends with a curl that regenerates the same bytes. Send schemas only, never real data.",
+        "data. The result gives the output's sha256 and ends with a curl that regenerates the same bytes. Send schemas only, never real data.",
       inputSchema: generateInput,
     },
     generate,

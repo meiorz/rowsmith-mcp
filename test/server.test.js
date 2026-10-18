@@ -1,5 +1,6 @@
 // Offline tests: fetch is replaced, so nothing reaches the live service and no call record is created.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,6 +39,21 @@ test("generate posts the tool arguments unchanged and returns the data plus a pr
   assert.match(out.content[1].text, /generator 1, sfc32-splitmix32, seed 7/);
 });
 
+test("the result carries one Output sha256 line: the service's X-Output-SHA256, else the sha256 of the data", async () => {
+  const body = "id\r\nord_0001\r\n";
+  const local = createHash("sha256").update(body).digest("hex");
+  const args = { rows: 1, seed: 7, columns: [{ name: "id", type: "sequence" }] };
+  fake(200, body, { ...OK_HEADERS, "x-output-sha256": local });
+  const lines = (await generate(args)).content[1].text.split("\n");
+  assert.equal(lines.filter((l) => l.startsWith("Output sha256 ")).length, 1);
+  assert.equal(lines[1], `Output sha256 ${local}`);
+  assert.ok(lines.at(-1).startsWith("Reproduce: curl "), "the reproduce curl stays last");
+  fake(200, body, OK_HEADERS);
+  assert.equal((await generate(args)).content[1].text.split("\n")[1], `Output sha256 ${local}`);
+  fake(200, body, { ...OK_HEADERS, "x-output-sha256": "f".repeat(64) });
+  assert.match((await generate(args)).content[1].text, new RegExp(`^Output sha256 ${"f".repeat(64)}$`, "m"));
+});
+
 test("a refusal becomes a tool error with the service's message and Retry-After", async () => {
   fake(429, JSON.stringify({ error: "Daily limit reached." }), { "retry-after": "3600" });
   const out = await generate({ columns: [{ name: "a", type: "uuid" }] });
@@ -72,6 +88,8 @@ test("output_path writes the file, returns a summary instead of the data, and ne
     assert.ok(!text.includes("a.b1@example.com"), "the data itself is not returned");
     assert.match(text, /Wrote 1 rows \(\d+ bytes\)/);
     assert.match(text, /sha256 [0-9a-f]{64}/);
+    assert.equal(text.match(/sha256 [0-9a-f]{64}/g).length, 1, "one sha256 line in the file summary");
+    assert.ok(text.includes(`sha256 ${createHash("sha256").update(body).digest("hex")}`));
     assert.match(text, /^id,email$/m);
 
     const again = await generate(args);
@@ -284,7 +302,7 @@ test("server.json and the package description describe only what is live with th
   for (const f of ["../server.json", "../package.json"]) {
     const text = await readFile(new URL(f, import.meta.url), "utf8");
     assert.doesNotMatch(text, /sandbox|payment|charge|refund/i, f);
-    assert.match(text, /"version": "0\.3\.\d+"/, f);
+    assert.match(text, /"version": "0\.4\.\d+"/, f);
   }
   // The registry entry names a published npm version; server.json follows package.json.
   const server = JSON.parse(await readFile(new URL("../server.json", import.meta.url), "utf8"));
@@ -292,6 +310,15 @@ test("server.json and the package description describe only what is live with th
   assert.equal(server.version, pkg.version);
   assert.equal(server.packages[0].version, pkg.version);
   assert.equal(server.repository?.url, "https://github.com/meiorz/rowsmith-mcp");
+});
+
+test("server.js states the package version as a constant (read here as text; server.js reads no file for it)", async () => {
+  const src = await readFile(new URL("../server.js", import.meta.url), "utf8");
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  const m = /^const VERSION = "([^"]+)";$/m.exec(src);
+  assert.ok(m, "server.js must declare const VERSION = \"<version>\";");
+  assert.equal(m[1], pkg.version);
+  assert.doesNotMatch(src, /package\.json/, "the version is not read from package.json at run time");
 });
 
 test("tool descriptions use process wording only and no processor naming", async () => {

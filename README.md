@@ -45,8 +45,8 @@ It is a thin client of the public Rowsmith API, free and rate-limited.
 At startup the server reads `/pricing.json` once (30 s timeout, cached for the process) and lists the
 two sandbox tools only if the service advertises `/v1/sandbox` there. If that request fails, the sandbox tools stay
 hidden and the server's instructions and `list_column_types` output say why; restart to check again. Tool-definition size, measured as characters of
-the `tools/list` JSON (names, titles, descriptions and input schemas) divided by 4: 3 tools, about 1233 tokens
-(4932 characters); 5 tools, about 1842 tokens (7365 characters). Measure with `node scripts/tool-tokens.js`.
+the `tools/list` JSON (names, titles, descriptions and input schemas) divided by 4: 3 tools, about 1241 tokens
+(4962 characters); 5 tools, about 1849 tokens (7395 characters). Measure with `node scripts/tool-tokens.js`.
 
 For more than about 50 rows, pass `output_path`: the server writes the file and returns a summary (rows, bytes,
 sha256, the header line) instead of putting the data in the model's context. Files can only be written inside the
@@ -68,8 +68,10 @@ The tools form a chain, and each description says which comes next: `generate_te
 `sandbox_create` and `sandbox_payments` for a payment flow when they are listed.
 
 Every `generate_test_data` result ends with a reproduce line: the exact curl, with the seed the service used and
-the generator version pinned, that regenerates the same bytes. A version the service no longer serves is refused
-with 409, never answered with different bytes. Chaos options are left out of it.
+the generator version pinned, that regenerates the same bytes. Chaos options are left out of it. A pinned version is served as long as the service runs; a retired version answers 409. A version's output is not changed in place: a golden test checks its bytes on every build. Above the reproduce line, a result that returns
+the data carries `Output sha256 <hex>`, the sha256 of the data's bytes (the service's `X-Output-SHA256`); with
+`output_path` the summary's sha256 line is that value. Pin it in a golden manifest to detect drift (format:
+https://testdata-api.re-jam620.workers.dev/llms.txt).
 
 `chaos` makes the service misbehave on purpose, to test error handling: `fail` (e.g. `"429@0.2"`; also 500, 503),
 `latency_ms` (at most 3000), `empty_result`, `attempt`. Outcomes are fixed by seed and attempt.

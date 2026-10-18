@@ -25,14 +25,18 @@ TOOL_HEADER = "pytest"
 TIMEOUT_S = 30.0
 FORMATS = ("csv", "json", "sql")
 # Response headers kept in the cache beside the body bytes.
-KEPT_HEADERS = ("content-type", "x-generator-version", "x-seed", "x-reproduce", "x-schema-version", "x-schema-unmapped")
+KEPT_HEADERS = ("content-type", "x-generator-version", "x-seed", "x-reproduce", "x-schema-version", "x-schema-unmapped",
+                "x-request-sha256", "x-output-sha256")
 # Schema keys whose values are examples or defaults: removed before a schema is sent (the service ignores them too).
 # Keys directly inside these maps are property or schema names, and are kept.
 EXAMPLE_KEYS = frozenset(("example", "examples", "default", "const"))
 NAME_MAPS = frozenset(("properties", "patternProperties", "$defs", "definitions", "schemas", "dependentSchemas"))
 CACHE_PREFIX = "rowsmith/v1/"
 
-__all__ = ["__version__", "Rowsmith", "RowsmithError", "RowsmithResult", "request_body", "DEFAULT_URL", "USER_AGENT"]
+MANIFEST_VERSION = 1
+
+__all__ = ["__version__", "Rowsmith", "RowsmithError", "RowsmithResult", "request_body", "assert_golden", "manifest_entry",
+           "DEFAULT_URL", "USER_AGENT", "MANIFEST_VERSION"]
 
 
 class RowsmithError(Exception):
@@ -80,6 +84,31 @@ class RowsmithResult:
         return hashlib.sha256(self.body).hexdigest()
 
     @property
+    def output_sha256(self):
+        """The service's X-Output-SHA256 (sha256 of the body bytes); without that header, the same hash computed
+        here from the body bytes."""
+        return self.headers.get("x-output-sha256") or self.sha256
+
+    @property
+    def request_sha256(self):
+        """The service's X-Request-SHA256: the sha256 of the canonical request that X-Reproduce encodes (defaults
+        filled in, version pinned; for a schema request, the mapped columns). Without that header, the sha256 of the
+        body in a body-b64url X-Reproduce line (the exact bytes); otherwise None (run once with --rowsmith-refresh)."""
+        value = self.headers.get("x-request-sha256")
+        if value:
+            return value
+        line = self.headers.get("x-reproduce") or ""
+        if line.startswith("POST /v1/generate body-b64url="):
+            b64 = line.split("=", 1)[1]
+            return hashlib.sha256(base64.urlsafe_b64decode(b64 + "=" * (-len(b64) % 4))).hexdigest()
+        return None
+
+    @property
+    def schema_version(self):
+        """X-Schema-Version for a schema request; None for a columns request."""
+        return self.headers.get("x-schema-version")
+
+    @property
     def generator_version(self):
         return self.headers.get("x-generator-version")
 
@@ -108,6 +137,55 @@ class RowsmithResult:
         if self.format == "csv":
             return list(csv.DictReader(io.StringIO(self.text, newline="")))
         return self.text
+
+
+def _self_contained(result):
+    """A reproduce line that regenerates the bytes by itself: X-Reproduce when it carries the body, otherwise the
+    request this client sent (version pinned too, so it regenerates the same bytes or is refused with 409)."""
+    line = result.headers.get("x-reproduce") or ""
+    return line if line.startswith("POST /v1/generate body-b64url=") else _request_line(result.request_body)
+
+
+def manifest_entry(result, name):
+    """One golden-manifest entry for a RowsmithResult: a dict with name, request_sha256, output_sha256,
+    output_version, schema_version (None for a columns request) and reproduce. Collect entries as
+    {"rowsmith_manifest": 1, "entries": [...]} and keep the file beside your eval."""
+    if not isinstance(name, str) or not name:
+        raise TypeError("name must be a non-empty string, e.g. \"orders-v1\"")
+    request_sha256 = result.request_sha256
+    if request_sha256 is None:
+        raise ValueError("this answer has no request sha256 (no X-Request-SHA256 header and no body-b64url X-Reproduce line); run once with --rowsmith-refresh")
+    return {
+        "name": name,
+        "request_sha256": request_sha256,
+        "output_sha256": result.sha256,
+        "output_version": result.generator_version,
+        "schema_version": result.schema_version,
+        "reproduce": _self_contained(result),
+    }
+
+
+def assert_golden(result, expected):
+    """Fails (AssertionError) unless the sha256 of result's body bytes is ``expected``: a hex string, or a manifest
+    entry dict (whose request_sha256 must then match too). The message names both hashes and the reproduce line."""
+    __tracebackhide__ = True
+    entry = expected if isinstance(expected, dict) else {"output_sha256": expected}
+    want = entry.get("output_sha256")
+    if not isinstance(want, str) or len(want) != 64:
+        raise TypeError("expected must be a 64-character sha256 hex string or a manifest entry")
+    label = " (%s)" % entry["name"] if entry.get("name") else ""
+    lines = []
+    if entry.get("request_sha256") and entry["request_sha256"] != result.request_sha256:
+        lines.append("Rowsmith request differs from the golden entry%s: expected request sha256 %s, got %s."
+                     % (label, entry["request_sha256"], result.request_sha256))
+    if result.sha256 != want.lower():
+        lines.append("Rowsmith output differs from the golden entry%s: expected output sha256 %s, got %s "
+                     "(output version %s, schema version %s, %s)."
+                     % (label, want, result.sha256, result.generator_version, result.schema_version or "none",
+                        "from the cache" if result.from_cache else "from the service"))
+    if lines:
+        lines.append("Reproduce: %s" % _self_contained(result))
+        raise AssertionError("\n".join(lines))
 
 
 def strip_examples(value, names=False):
@@ -247,6 +325,10 @@ class Rowsmith:
         self.retry_delay = retry_delay
         self.network_calls = 0
         self._memory = {}
+
+    # The golden-manifest helpers, on the fixture too: rowsmith.assert_golden(...), rowsmith.manifest_entry(...).
+    assert_golden = staticmethod(assert_golden)
+    manifest_entry = staticmethod(manifest_entry)
 
     def generate(self, columns=None, rows=10, seed=1, format="json", table=None, version="1", schema=None):
         """Rows for csv and json (a list of dicts), the SQL text for sql. Pass columns or schema."""

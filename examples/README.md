@@ -12,8 +12,7 @@ never real data.
 | `payment-sandbox/` | a checkout test: one charge that succeeds (201), one that is declined (422) |
 | `github-actions/` | the fixtures Action writing a file before `npm test` |
 
-Pin `"version"` in the request to keep the bytes fixed when the generator changes; a version the service no longer
-serves is refused with 409, never answered with different bytes.
+Pin `"version"` in the request to keep the bytes fixed when the generator changes. A pinned version is served as long as the service runs; a retired version answers 409. A version's output is not changed in place: a golden test checks its bytes on every build.
 
 Pin the fixtures Action to a release tag (`meiorz/rowsmith-mcp/fixtures@v0.2.3`), not `@main`, so later changes to
 the Action reach your workflow only when you move the pin.

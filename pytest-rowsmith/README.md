@@ -72,7 +72,8 @@ def test_users(rowsmith):
 - `rowsmith.generate(columns, ...)` (or `generate(schema=..., ...)`) returns a list of dicts for `json` (values typed as in the JSON) and `csv`
   (values are strings), and the SQL text for `sql`.
 - `rowsmith.fetch(columns, ...)` returns a `RowsmithResult` with `body` (the exact bytes), `text`, `sha256`,
-  `headers`, `generator_version`, `seed`, `reproduce`, `schema_unmapped`, `from_cache` and `parsed()`. `reproduce` is the service's
+  `headers`, `generator_version`, `seed`, `reproduce`, `schema_unmapped`, `schema_version`, `output_sha256`,
+  `request_sha256`, `from_cache` and `parsed()`. `reproduce` is the service's
   X-Reproduce line (sent with CSV and SQL answers, and kept in the cache); JSON answers carry none, so for them it
   is the request that was sent, in the same form.
 - On anything other than a successful answer the call raises `pytest_rowsmith.RowsmithError`. Its message names
@@ -82,11 +83,35 @@ def test_users(rowsmith):
 
 `pytest_rowsmith.Rowsmith` is the same client outside pytest (`Rowsmith(base_url=..., cache=None)`).
 
+## Golden manifests
+Pin a dataset for an eval and detect drift. The service sends `X-Output-SHA256` (the sha256 of the body bytes) and
+`X-Request-SHA256` (the sha256 of the canonical request, the same for a schema and the columns it maps to) with
+every answer; the result exposes them as `output_sha256` and `request_sha256`, and the cache keeps them.
+`request_sha256` is the X-Request-SHA256 header; without it, the sha256 of the body in a body-b64url X-Reproduce
+line; otherwise None, and a run with `--rowsmith-refresh` fetches the answer again with its headers.
+`output_sha256` without its header is computed from the body bytes.
+```python
+ORDERS = [{"name": "order_id", "type": "sequence", "prefix": "ord_", "pad": 4}, {"name": "email", "type": "email"}]
+
+def test_orders_are_golden(rowsmith):
+    result = rowsmith.fetch(ORDERS, rows=20, seed=42, format="csv")
+    entry = rowsmith.manifest_entry(result, "orders-v1")  # save it once, e.g. into tests/golden.json
+    rowsmith.assert_golden(result, entry["output_sha256"])  # later: compare against the saved entry or its hash
+```
+- `rowsmith.manifest_entry(result, name)` returns `{"name", "request_sha256", "output_sha256", "output_version",
+  "schema_version", "reproduce"}`, one entry of `{"rowsmith_manifest": 1, "entries": [...]}` (the format is in the
+  service's llms.txt). `reproduce` regenerates the bytes by itself: the service's X-Reproduce line when it carries
+  the body, otherwise the request the plugin sent.
+- `rowsmith.assert_golden(result, expected)` takes a sha256 hex string or a manifest entry (then the request hash
+  must match too) and fails with both hashes, the versions, whether the answer came from the cache, and the
+  reproduce line. Both are also importable from `pytest_rowsmith`.
+- The plugin pins the version in every request. A pinned version is served as long as the service runs; a retired version answers 409. A version's output is not changed in place: a golden test checks its bytes on every build.
+
 ## Caching and offline runs
 Answers are stored in pytest's own cache (`.pytest_cache/v/rowsmith/v1/` in your project), one entry per request,
 keyed by the sha256 of the exact request-body bytes. An entry holds the response bytes and the headers
-content-type, x-generator-version, x-seed and x-reproduce, plus x-schema-version and x-schema-unmapped for a
-schema request. A suite therefore calls the API once per distinct
+content-type, x-generator-version, x-seed, x-reproduce, x-request-sha256 and x-output-sha256, plus
+x-schema-version and x-schema-unmapped for a schema request. A suite therefore calls the API once per distinct
 request and then runs offline, as long as `.pytest_cache` is kept. A damaged entry is fetched again.
 
 - `pytest --rowsmith-refresh` ignores the cache: each distinct request is sent once in that run and its entry is
