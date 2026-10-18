@@ -1,0 +1,224 @@
+"""Offline tests of the client: request bytes and headers, parsing, cache, retries and error messages."""
+import base64
+import hashlib
+import json
+import pathlib
+import socket
+
+import pytest
+
+import pytest_rowsmith
+from pytest_rowsmith import Rowsmith, RowsmithError, request_body
+
+from conftest import CSV_BODY, JSON_BODY, REPRODUCE, SQL_BODY
+
+COLUMNS = [{"name": "id", "type": "sequence"}, {"name": "name", "type": "first_name"}]
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+class DictCache:
+    """Same get/set shape as pytest's config.cache, stored as JSON text like the real one."""
+
+    def __init__(self):
+        self.data = {}
+
+    def get(self, key, default):
+        return json.loads(self.data[key]) if key in self.data else default
+
+    def set(self, key, value):
+        self.data[key] = json.dumps(value)
+
+
+def client(stub, **kw):
+    kw.setdefault("retry_delay", 0)
+    return Rowsmith(base_url=stub.url, **kw)
+
+
+def test_version_is_pinned_once_and_sent_in_the_user_agent():
+    assert pytest_rowsmith.__version__ == "0.1.0"
+    assert pytest_rowsmith.USER_AGENT == "pytest-rowsmith/0.1.0"
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'version = { attr = "pytest_rowsmith.__version__" }' in pyproject
+    assert 'dynamic = ["version"]' in pyproject
+
+
+def test_request_body_and_headers(stub):
+    rs = client(stub)
+    rs.generate(COLUMNS, rows=3, seed=7, format="csv", table="people")
+    (r,) = stub.requests
+    assert r["path"] == "/v1/generate"
+    assert r["body"] == request_body(COLUMNS, rows=3, seed=7, format="csv", table="people")
+    assert r["body"] == (
+        b'{"table":"people","rows":3,"seed":7,"format":"csv","version":"1",'
+        b'"columns":[{"name":"id","type":"sequence"},{"name":"name","type":"first_name"}]}'
+    )
+    h = r["headers"]
+    assert h["user-agent"] == "pytest-rowsmith/0.1.0"
+    assert not h["user-agent"].startswith("Python-urllib")
+    assert h["x-rowsmith-tool"] == "pytest"
+    assert h["content-type"] == "application/json"
+
+
+def test_seed_and_version_are_always_sent_with_deterministic_defaults(stub):
+    client(stub).generate(COLUMNS)
+    body = json.loads(stub.requests[0]["body"])
+    assert body == {"rows": 10, "seed": 1, "format": "json", "version": "1", "columns": COLUMNS}
+    assert "table" not in body
+
+
+def test_csv_json_sql_parsing_and_raw_bytes(stub):
+    rs = client(stub)
+    assert rs.generate(COLUMNS, format="csv") == [{"id": "1", "name": "Ada"}, {"id": "2", "name": "Lovelace, A"}]
+    assert rs.generate(COLUMNS, format="json") == [
+        {"id": 1, "name": "Ada", "email": None},
+        {"id": 2, "name": "Bo", "email": "bo@example.com"},
+    ]
+    assert rs.generate(COLUMNS, format="sql") == SQL_BODY.decode()
+    res = rs.fetch(COLUMNS, format="csv")
+    assert res.body == CSV_BODY
+    assert res.sha256 == hashlib.sha256(CSV_BODY).hexdigest()
+    assert res.generator_version == "1" and res.seed == 1
+    assert res.reproduce == REPRODUCE
+    assert rs.fetch(COLUMNS, format="json").body == JSON_BODY
+
+
+def test_json_result_without_x_reproduce_gives_the_request_sent():
+    body = request_body(COLUMNS)
+    res = pytest_rowsmith.RowsmithResult(b"[]", {}, body, False, "json")
+    assert res.reproduce == "POST /v1/generate body-b64url=" + base64.urlsafe_b64encode(body).decode().rstrip("=")
+
+
+def test_bad_arguments_are_refused_before_any_call(stub):
+    rs = client(stub)
+    with pytest.raises(ValueError):
+        rs.generate(COLUMNS, format="xml")
+    with pytest.raises(TypeError):
+        rs.generate(COLUMNS, seed="1")
+    with pytest.raises(TypeError):
+        rs.generate(COLUMNS, version=1)
+    assert stub.requests == []
+
+
+def test_cache_miss_then_hit_works_offline_and_keeps_the_reproduce_line(stub):
+    cache = DictCache()
+    first = client(stub, cache=cache).fetch(COLUMNS, format="csv")
+    assert not first.from_cache
+    assert len(stub.requests) == 1
+    key = "rowsmith/v1/" + hashlib.sha256(request_body(COLUMNS, format="csv")).hexdigest()
+    assert list(cache.data) == [key]
+    stored = json.loads(cache.data[key])
+    assert set(stored) == {"body_b64", "body_sha256", "headers"}
+    assert set(stored["headers"]) == {"content-type", "x-generator-version", "x-seed", "x-reproduce"}
+
+    offline = Rowsmith(base_url="http://127.0.0.1:9", cache=cache, retry_delay=0)
+    hit = offline.fetch(COLUMNS, format="csv")
+    assert hit.from_cache
+    assert hit.body == CSV_BODY
+    assert hit.reproduce == REPRODUCE
+    assert offline.network_calls == 0
+    assert len(stub.requests) == 1
+
+
+def test_a_different_request_is_a_cache_miss(stub):
+    cache = DictCache()
+    rs = client(stub, cache=cache)
+    rs.generate(COLUMNS, seed=1)
+    rs.generate(COLUMNS, seed=2)
+    rs.generate(COLUMNS, seed=1, version="2")
+    assert len(stub.requests) == 3
+    assert len(cache.data) == 3
+
+
+def test_refresh_bypasses_the_cache_once_per_request_and_replaces_it(stub):
+    cache = DictCache()
+    client(stub, cache=cache).generate(COLUMNS, format="csv")
+    stub.answer(200, b"id,name\r\n9,Zed\r\n", {"content-type": "text/csv", "x-reproduce": "POST /v1/generate body-b64url=bmV3"})
+    rs = client(stub, cache=cache, refresh=True)
+    assert rs.generate(COLUMNS, format="csv") == [{"id": "9", "name": "Zed"}]
+    assert rs.generate(COLUMNS, format="csv") == [{"id": "9", "name": "Zed"}]
+    assert len(stub.requests) == 2
+    again = client(stub, cache=cache).fetch(COLUMNS, format="csv")
+    assert again.from_cache and again.body == b"id,name\r\n9,Zed\r\n"
+    assert again.reproduce == "POST /v1/generate body-b64url=bmV3"
+
+
+def test_a_damaged_cache_entry_is_fetched_again(stub):
+    cache = DictCache()
+    client(stub, cache=cache).generate(COLUMNS)
+    (key,) = cache.data
+    entry = json.loads(cache.data[key])
+    entry["body_b64"] = base64.b64encode(b"tampered").decode()
+    cache.data[key] = json.dumps(entry)
+    assert client(stub, cache=cache).fetch(COLUMNS).body == JSON_BODY
+    assert len(stub.requests) == 2
+
+
+def test_409_error_names_status_next_and_reproduce_without_retry(stub):
+    stub.answer(409, json.dumps({"error": "Generator version 9 is not served.", "next": "Send version 1."}).encode(),
+                {"content-type": "application/json"})
+    with pytest.raises(RowsmithError) as ei:
+        client(stub).generate(COLUMNS, version="9")
+    e = ei.value
+    msg = str(e)
+    assert e.status == 409
+    assert "HTTP 409" in msg
+    assert "Generator version 9 is not served." in msg
+    assert "Next: Send version 1." in msg
+    sent = stub.requests[0]["body"]
+    assert "Reproduce: POST /v1/generate body-b64url=" + base64.urlsafe_b64encode(sent).decode().rstrip("=") in msg
+    assert len(stub.requests) == 1  # no retry on 4xx
+
+
+def test_error_uses_the_services_x_reproduce_when_present(stub):
+    stub.answer(400, b'{"error":"bad column","next":"See GET /v1/types."}', {"x-reproduce": REPRODUCE})
+    with pytest.raises(RowsmithError) as ei:
+        client(stub).generate(COLUMNS)
+    assert "Reproduce: " + REPRODUCE in str(ei.value)
+    assert "Next: See GET /v1/types." in str(ei.value)
+
+
+def test_429_mentions_retry_after(stub):
+    stub.answer(429, b'{"error":"Daily limit reached.","next":"Try tomorrow."}', {"retry-after": "3600"})
+    with pytest.raises(RowsmithError) as ei:
+        client(stub).generate(COLUMNS)
+    assert "HTTP 429" in str(ei.value) and "Retry-After: 3600 s" in str(ei.value)
+    assert len(stub.requests) == 1
+
+
+def test_one_retry_on_5xx_then_success(stub):
+    cache = DictCache()
+    stub.answer(503, b'{"error":"busy"}')
+    assert client(stub, cache=cache).generate(COLUMNS)[0]["name"] == "Ada"
+    assert len(stub.requests) == 2
+    assert len(cache.data) == 1
+
+
+def test_exactly_one_retry_on_5xx_then_a_clear_failure_and_nothing_cached(stub):
+    cache = DictCache()
+    stub.answer(500, b'{"error":"boom"}')
+    stub.answer(502, b"<html>bad gateway</html>")
+    stub.answer(200, JSON_BODY)  # never reached
+    with pytest.raises(RowsmithError) as ei:
+        client(stub, cache=cache).generate(COLUMNS)
+    assert ei.value.status == 502 and "HTTP 502" in str(ei.value)
+    assert "Reproduce: POST /v1/generate body-b64url=" in str(ei.value)
+    assert len(stub.requests) == 2
+    assert cache.data == {}
+
+
+def test_network_error_retries_once_then_fails_clearly():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()  # nothing listens on this port now
+    rs = Rowsmith(base_url="http://127.0.0.1:%d" % port, retry_delay=0, timeout=5)
+    with pytest.raises(RowsmithError) as ei:
+        rs.generate(COLUMNS)
+    assert ei.value.status is None
+    assert "no HTTP answer" in str(ei.value)
+    assert "Reproduce: POST /v1/generate body-b64url=" in str(ei.value)
+    assert rs.network_calls == 2
+
+
+def test_default_timeout_is_30_seconds():
+    assert Rowsmith().timeout == 30.0

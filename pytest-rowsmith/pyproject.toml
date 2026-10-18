@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pytest-rowsmith"
+dynamic = ["version"]
+description = "pytest fixture for reproducible fake test data (CSV, JSON, SQL) from the free Rowsmith API, cached for offline runs."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "meiorz" }]
+requires-python = ">=3.9"
+dependencies = ["pytest>=7"]
+keywords = ["pytest", "fixtures", "test data", "fake data", "csv", "sql"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+]
+
+[project.urls]
+Homepage = "https://github.com/meiorz/rowsmith-mcp/tree/main/pytest-rowsmith"
+Source = "https://github.com/meiorz/rowsmith-mcp"
+Issues = "https://github.com/meiorz/rowsmith-mcp/issues"
+
+[project.entry-points.pytest11]
+rowsmith = "pytest_rowsmith.plugin"
+
+[tool.setuptools.dynamic]
+version = { attr = "pytest_rowsmith.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: calls the real Rowsmith API; runs only with ROWSMITH_LIVE=1"]

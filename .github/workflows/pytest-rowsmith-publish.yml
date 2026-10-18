@@ -1,0 +1,108 @@
+# Publishes pytest-rowsmith to PyPI with trusted publishing (OIDC; no API token is stored anywhere). It runs only
+# when a tag like pytest-rowsmith-v0.1.0 is pushed. The test job runs the offline tests on Python 3.9 and 3.13; the
+# build job (3.12) needs it, runs the offline tests again, builds the sdist and wheel with the pinned backend and
+# writes their sha256 and the tool versions to the job summary; the publish job alone may request an OIDC token, in
+# the pypi environment. Actions are pinned to full commit SHAs.
+name: pytest-rowsmith-publish
+on:
+  push:
+    tags:
+      - "pytest-rowsmith-v*.*.*"
+permissions: {}
+concurrency:
+  group: pytest-rowsmith-publish
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # pytest 9.1.1 requires Python >= 3.10 (PyPI metadata), so 3.9 runs pytest 8.4.2, the newest for 3.9.
+          - python: "3.9"
+            pytest: "8.4.2"
+          - python: "3.13"
+            pytest: "9.1.1"
+    defaults:
+      run:
+        working-directory: pytest-rowsmith
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the pinned pytest
+        env:
+          PYTEST_PIN: ${{ matrix.pytest }}
+        run: python -m pip install "pytest==$PYTEST_PIN"
+      - name: Offline tests (the live test is deselected without ROWSMITH_LIVE=1)
+        run: PYTHONPATH=src python -m pytest -q -p no:cacheprovider -W error
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: pytest-rowsmith
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Check that the tag matches __version__
+        shell: bash
+        run: |
+          set -euo pipefail
+          want="${GITHUB_REF_NAME#pytest-rowsmith-v}"
+          got="$(PYTHONPATH=src python -c 'import pytest_rowsmith; print(pytest_rowsmith.__version__)')"
+          if [ "$want" != "$got" ]; then
+            echo "::error::tag says $want but pytest_rowsmith.__version__ is $got"
+            exit 1
+          fi
+      - name: Install the pinned build backend, build frontend and pytest
+        run: python -m pip install setuptools==84.0.0 build==1.6.1 pytest==9.1.1
+      - name: Offline tests (the live test is deselected without ROWSMITH_LIVE=1)
+        run: PYTHONPATH=src python -m pytest -q -p no:cacheprovider -W error
+      - name: Build the sdist and wheel with the pinned backend
+        run: python -m build --no-isolation
+      - name: Write the sha256 of each artifact and the tool versions to the job summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### pytest-rowsmith artifacts"
+            echo '```'
+            (cd dist && sha256sum *)
+            python -c 'import importlib.metadata as m; [print(p, m.version(p)) for p in ("setuptools", "build", "pytest")]'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: pytest-rowsmith/dist/
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
