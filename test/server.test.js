@@ -1,0 +1,268 @@
+// Offline tests: fetch is replaced, so nothing reaches the live service and no call record is created.
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, test } from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { BASE_URL, createServer, generate, invalidValues, listTypes, resolveOutputPath, SANDBOX_CHECK_FAILED_NOTE, resetSandboxStatus, sandboxAdvertised, sandboxCreate, sandboxPayments, sandboxStatus } from "../server.js";
+import { measureTools } from "../scripts/tool-tokens.js";
+
+const realFetch = globalThis.fetch;
+afterEach(() => {
+  globalThis.fetch = realFetch;
+});
+
+const OK_HEADERS = { "x-generator-version": "1", "x-prng": "sfc32-splitmix32", "x-seed": "7" };
+
+function fake(status, body, headers = {}) {
+  const seen = [];
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url, init });
+    return new Response(body, { status, headers });
+  };
+  return seen;
+}
+
+test("generate posts the tool arguments unchanged and returns the data plus a provenance line", async () => {
+  const seen = fake(200, "id\r\nord_0001\r\n", OK_HEADERS);
+  const args = { rows: 1, seed: 7, columns: [{ name: "id", type: "sequence", prefix: "ord_", pad: 4 }] };
+  const out = await generate(args);
+  assert.equal(seen[0].url, `${BASE_URL}/v1/generate`);
+  assert.equal(seen[0].init.method, "POST");
+  assert.ok(seen[0].init.signal instanceof AbortSignal, "every call carries a timeout signal");
+  assert.deepEqual(JSON.parse(seen[0].init.body), args);
+  assert.equal(out.isError, undefined);
+  assert.equal(out.content[0].text, "id\r\nord_0001\r\n");
+  assert.match(out.content[1].text, /generator 1, sfc32-splitmix32, seed 7/);
+});
+
+test("a refusal becomes a tool error with the service's message and Retry-After", async () => {
+  fake(429, JSON.stringify({ error: "Daily limit reached." }), { "retry-after": "3600" });
+  const out = await generate({ columns: [{ name: "a", type: "uuid" }] });
+  assert.equal(out.isError, true);
+  assert.match(out.content[0].text, /HTTP 429\): Daily limit reached\. Retry after 3600 s\./);
+});
+
+test("a network failure and a timeout become tool errors", async () => {
+  globalThis.fetch = async () => {
+    throw new Error("offline");
+  };
+  assert.match((await listTypes()).content[0].text, /Could not reach Rowsmith: offline/);
+  globalThis.fetch = async () => {
+    throw Object.assign(new Error("aborted"), { name: "TimeoutError" });
+  };
+  assert.match((await listTypes()).content[0].text, /no response within 30 s/);
+});
+
+test("output_path writes the file, returns a summary instead of the data, and never overwrites silently", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rowsmith-mcp-"));
+  process.env.ROWSMITH_OUT_DIR = dir;
+  try {
+    const body = "id,email\r\n1,a.b1@example.com\r\n";
+    const seen = fake(200, body, OK_HEADERS);
+    const file = join(dir, "out.csv");
+    const args = { rows: 1, columns: [{ name: "id", type: "sequence" }], output_path: file };
+    const out = await generate(args);
+    assert.equal(out.isError, undefined);
+    assert.equal(await readFile(file, "utf8"), body);
+    assert.ok(!("output_path" in JSON.parse(seen[0].init.body)), "output_path is not sent to the service");
+    const text = out.content[0].text;
+    assert.ok(!text.includes("a.b1@example.com"), "the data itself is not returned");
+    assert.match(text, /Wrote 1 rows \(\d+ bytes\)/);
+    assert.match(text, /sha256 [0-9a-f]{64}/);
+    assert.match(text, /^id,email$/m);
+
+    const again = await generate(args);
+    assert.equal(again.isError, true);
+    assert.match(again.content[0].text, /already exists; pass overwrite: true/);
+
+    await writeFile(file, "old");
+    assert.equal((await generate({ ...args, overwrite: true })).isError, undefined);
+    assert.equal(await readFile(file, "utf8"), body);
+  } finally {
+    delete process.env.ROWSMITH_OUT_DIR;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("output_path stays inside ROWSMITH_OUT_DIR, refusing '..', siblings, the root itself and other drives", () => {
+  const root = join(tmpdir(), "allowed");
+  assert.ok(resolveOutputPath("../x.csv", root).error);
+  assert.ok(resolveOutputPath("a/../../x.csv", root).error);
+  assert.ok(resolveOutputPath(join(tmpdir(), "elsewhere", "x.csv"), root).error);
+  assert.ok(resolveOutputPath(join(tmpdir(), "allowed-sibling", "x.csv"), root).error, "a sibling sharing the prefix is outside");
+  assert.ok(resolveOutputPath(root, root).error, "the directory itself is not a file");
+  assert.equal(resolveOutputPath(join(root, "sub", "x.csv"), root).error, undefined);
+  if (process.platform === "win32") assert.ok(resolveOutputPath("Z:\\x.csv", "C:\\out").error, "another drive is outside");
+});
+
+test("without ROWSMITH_OUT_DIR the write root is the working directory (CTO C5)", () => {
+  delete process.env.ROWSMITH_OUT_DIR;
+  assert.equal(resolveOutputPath("fixtures/x.csv").error, undefined);
+  assert.equal(resolveOutputPath(join(process.cwd(), "x.csv")).error, undefined);
+  const outside = resolveOutputPath(process.platform === "win32" ? "C:\\Windows\\Temp\\x.csv" : "/etc/x.csv");
+  assert.match(outside.error, /must be inside the working directory \(or ROWSMITH_OUT_DIR when set\)/);
+  assert.ok(resolveOutputPath(join(tmpdir(), "x.csv")).error, "an absolute path elsewhere is refused");
+});
+
+async function listed(options) {
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const server = createServer(options);
+  await server.connect(serverSide);
+  const client = new Client({ name: "test", version: "0" });
+  await client.connect(clientSide);
+  const { tools } = await client.listTools();
+  await client.close();
+  await server.close();
+  return tools;
+}
+
+test("without the sandbox advertised, a client sees exactly the three non-sandbox tools", async () => {
+  const tools = await listed();
+  assert.deepEqual(tools.map((t) => t.name).sort(), ["generate_test_data", "invalid_values", "list_column_types"]);
+});
+
+test("with the sandbox advertised, a client sees five tools (at most 6)", async () => {
+  const tools = await listed({ sandbox: true });
+  assert.deepEqual(tools.map((t) => t.name).sort(), ["generate_test_data", "invalid_values", "list_column_types", "sandbox_create", "sandbox_payments"]);
+  assert.ok(tools.length <= 6);
+});
+
+const pricing = (endpoints) => JSON.stringify({ tiers: [{ name: "free", endpoints }] });
+
+test("startup check, advertised: one GET of /pricing.json, cached for the process; sandbox tools listed", async () => {
+  resetSandboxStatus();
+  const seen = fake(200, pricing(["POST /v1/generate", "/v1/sandbox"]));
+  assert.equal(await sandboxStatus(), "advertised");
+  assert.equal(await sandboxAdvertised(), true);
+  assert.equal(await sandboxStatus(), "advertised");
+  assert.equal(seen.length, 1, "fetched once, then cached");
+  assert.equal(seen[0].url, `${BASE_URL}/pricing.json`);
+  assert.ok(seen[0].init.signal instanceof AbortSignal, "the check carries a timeout");
+  assert.equal((await listed({ sandbox: true })).length, 5);
+  resetSandboxStatus();
+});
+
+test("startup check, not advertised: sandbox tools hidden, no failure note", async () => {
+  resetSandboxStatus();
+  fake(200, pricing(["POST /v1/generate", "GET /v1/invalid", "GET /v1/types"]));
+  assert.equal(await sandboxStatus(), "not_advertised");
+  assert.equal((await listed({ sandbox: false })).length, 3);
+  fake(200, '{"types":{}}');
+  const out = await createServerTool({ sandboxCheckFailed: false }, "list_column_types");
+  assert.ok(!out.content.some((c) => c.text === SANDBOX_CHECK_FAILED_NOTE));
+  resetSandboxStatus();
+});
+
+test("startup check, fetch failed: sandbox tools hidden (fail closed) and the server says why", async () => {
+  for (const failure of [
+    () => fake(500, "oops"),
+    () => fake(200, "not json"),
+    () => {
+      globalThis.fetch = async () => {
+        throw Object.assign(new Error("aborted"), { name: "TimeoutError" });
+      };
+    },
+  ]) {
+    resetSandboxStatus();
+    failure();
+    assert.equal(await sandboxStatus(), "failed");
+    assert.equal(await sandboxAdvertised(), false);
+  }
+  resetSandboxStatus();
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const server = createServer({ sandbox: false, sandboxCheckFailed: true });
+  await server.connect(serverSide);
+  const client = new Client({ name: "test", version: "0" });
+  await client.connect(clientSide);
+  assert.equal(client.getInstructions(), SANDBOX_CHECK_FAILED_NOTE);
+  const { tools } = await client.listTools();
+  assert.equal(tools.length, 3);
+  fake(200, '{"types":{}}');
+  const out = await client.callTool({ name: "list_column_types", arguments: {} });
+  assert.equal(out.content.at(-1).text, SANDBOX_CHECK_FAILED_NOTE);
+  await client.close();
+  await server.close();
+});
+
+async function createServerTool(options, name) {
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const server = createServer(options);
+  await server.connect(serverSide);
+  const client = new Client({ name: "test", version: "0" });
+  await client.connect(clientSide);
+  const out = await client.callTool({ name, arguments: {} });
+  await client.close();
+  await server.close();
+  return out;
+}
+
+test("generate_test_data keeps its schema", async () => {
+  const tools = await listed();
+  const gen = tools.find((t) => t.name === "generate_test_data");
+  assert.deepEqual(gen.inputSchema.required, ["columns"]);
+  assert.ok("output_path" in gen.inputSchema.properties);
+});
+
+test("the published tool-definition sizes match the measurement (characters / 4), for 3 and 5 tools", async () => {
+  const docs = await readFile(new URL("../../src/agentdocs.ts", import.meta.url), "utf8");
+  for (const [sandbox, suffix, tools] of [[false, "", 3], [true, "_WITH_SANDBOX", 5]]) {
+    const m = await measureTools({ sandbox });
+    assert.equal(m.tools, tools);
+    assert.ok(docs.includes(`MCP_TOOL_CHARS${suffix} = ${m.chars};`), `src/agentdocs.ts must state ${m.chars} characters`);
+    assert.ok(docs.includes(`MCP_TOOL_TOKENS${suffix} = ${m.tokens};`), `src/agentdocs.ts must state ${m.tokens} tokens`);
+    for (const f of ["../README.md", "../../README.md"]) {
+      const text = (await readFile(new URL(f, import.meta.url), "utf8")).replace(/\s+/g, " ");
+      assert.ok(text.includes(`about ${m.tokens} tokens`), `${f} must state about ${m.tokens} tokens`);
+      assert.ok(text.includes(`${m.chars} characters`), `${f} must state ${m.chars} characters`);
+    }
+  }
+});
+
+test("server.json and the package description describe only what is live with the flags off", async () => {
+  for (const f of ["../server.json", "../package.json"]) {
+    const text = await readFile(new URL(f, import.meta.url), "utf8");
+    assert.doesNotMatch(text, /sandbox|payment|charge|refund/i, f);
+    // server.json pins the registry entry (0.2.0); package.json may carry README-only patch releases (0.2.x).
+    assert.match(text, f.endsWith("server.json") ? /"version": "0\.2\.0"/ : /"version": "0\.2\.\d+"/, f);
+  }
+});
+
+test("tool descriptions use process wording only and no processor naming", async () => {
+  const text = JSON.stringify(await listed({ sandbox: true }));
+  assert.doesNotMatch(text, /\b(safe|anonymous|AI)\b/);
+  assert.equal(text.replace(/Stripe's published testing list/g, "").includes("Stripe"), false);
+});
+
+test("chaos options become query parameters, never body fields; the tool name is sent for counting", async () => {
+  const seen = fake(200, "id\r\n1\r\n", OK_HEADERS);
+  const args = { rows: 1, columns: [{ name: "id", type: "sequence" }] };
+  await generate({ ...args, chaos: { fail: "429@0.2", latency_ms: 100, empty_result: true, attempt: 3 } });
+  assert.equal(seen[0].url, `${BASE_URL}/v1/generate?fail=429%400.2&latency=100&empty_result=1&attempt=3`);
+  assert.deepEqual(JSON.parse(seen[0].init.body), args);
+  assert.equal(seen[0].init.headers["x-rowsmith-tool"], "generate_test_data");
+});
+
+test("invalid_values passes kind, count, seed and fields", async () => {
+  const seen = fake(200, '{"items":[]}');
+  await invalidValues({ kind: "email", count: 3, seed: 9, fields: "value,reason" });
+  assert.equal(seen[0].url, `${BASE_URL}/v1/invalid?kind=email&count=3&seed=9&fields=value%2Creason`);
+});
+
+test("sandbox tools route each action, and say plainly when the sandbox is not open", async () => {
+  const id = "sbx_" + "a".repeat(32);
+  let seen = fake(201, '{"id":"ch_test_x"}');
+  await sandboxPayments({ sandbox_id: id, action: "charge", amount: 100, card: "4242424242424242" });
+  assert.equal(seen[0].url, `${BASE_URL}/v1/sandbox/${id}/charges`);
+  assert.deepEqual(JSON.parse(seen[0].init.body), { amount: 100, card: "4242424242424242" });
+  seen = fake(200, "{}");
+  await sandboxPayments({ sandbox_id: id, action: "list", limit: 5, fields: "id,status" });
+  assert.equal(seen[0].url, `${BASE_URL}/v1/sandbox/${id}/charges?fields=id%2Cstatus&limit=5`);
+  assert.equal((await sandboxPayments({ sandbox_id: id, action: "refund" })).isError, true);
+  fake(404, JSON.stringify({ error: "Not found." }));
+  assert.match((await sandboxCreate({})).content[0].text, /not open/);
+  fake(404, JSON.stringify({ error: "No such sandbox.", next: "Create one." }), { "x-rowsmith-sandbox": "test" });
+  assert.match((await sandboxPayments({ sandbox_id: id, action: "list" })).content[0].text, /No such sandbox\. Next: Create one\./);
+});

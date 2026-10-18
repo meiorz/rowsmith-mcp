@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.meiorz/rowsmith",
+  "title": "Rowsmith test data",
+  "description": "Fake test data (CSV, JSON, SQL) from a schema. Reserved-range identifiers; reproducible by seed.",
+  "version": "0.2.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "rowsmith-mcp",
+      "version": "0.2.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "ROWSMITH_URL",
+          "description": "Override the API base URL (default https://testdata-api.re-jam620.workers.dev)",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

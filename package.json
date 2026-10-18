@@ -1,0 +1,29 @@
+{
+  "name": "rowsmith-mcp",
+  "version": "0.2.1",
+  "description": "MCP server for Rowsmith: generated fake test data (CSV, JSON, SQL) from a schema. Free, rate-limited.",
+  "author": "meiorz",
+  "homepage": "https://testdata-api.re-jam620.workers.dev/terms",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "rowsmith-mcp": "index.js"
+  },
+  "files": [
+    "index.js",
+    "server.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "mcpName": "io.github.meiorz/rowsmith",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "zod": "4.6.5"
+  }
+}
