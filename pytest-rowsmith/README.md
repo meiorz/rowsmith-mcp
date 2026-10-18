@@ -83,7 +83,7 @@ request and then runs offline, as long as `.pytest_cache` is kept. A damaged ent
 | API base URL | `ROWSMITH_URL` environment variable, or `rowsmith_url` in your pytest ini file; the variable wins | `https://testdata-api.re-jam620.workers.dev` |
 | Bypass the cache | `--rowsmith-refresh` | off |
 
-Every request sends `User-Agent: pytest-rowsmith/<version>` and `x-rowsmith-tool: pytest`.
+Every request sends `User-Agent: pytest-rowsmith/<version>` and `x-rowsmith-tool: pytest`. The service counts these calls under tool pytest in its aggregate usage totals (counts only; nothing per caller).
 
 ## Limits and terms
 Up to 500 rows and 50 columns per call, with daily limits per caller; over a limit the call fails with the
