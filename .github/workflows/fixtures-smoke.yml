@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: fx
-        uses: ./fixtures
+        uses: meiorz/rowsmith-mcp/fixtures@main
         with:
           schema: examples/quickstart-schema.json
           seed: "42"
