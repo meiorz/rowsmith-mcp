@@ -1,6 +1,7 @@
 """pytest-rowsmith: reproducible fake test data from the Rowsmith API, cached for offline test runs.
 
-The client sends schemas only (column definitions), never data. It uses the standard library alone (urllib),
+The client sends schemas only (column definitions, or a JSON Schema without its example and default values),
+never data. It uses the standard library alone (urllib),
 and reaches the network only when a generate call misses the cache or the cache is bypassed with
 ``--rowsmith-refresh``. Importing this package or loading the plugin opens no connection.
 """
@@ -24,7 +25,11 @@ TOOL_HEADER = "pytest"
 TIMEOUT_S = 30.0
 FORMATS = ("csv", "json", "sql")
 # Response headers kept in the cache beside the body bytes.
-KEPT_HEADERS = ("content-type", "x-generator-version", "x-seed", "x-reproduce")
+KEPT_HEADERS = ("content-type", "x-generator-version", "x-seed", "x-reproduce", "x-schema-version", "x-schema-unmapped")
+# Schema keys whose values are examples or defaults: removed before a schema is sent (the service ignores them too).
+# Keys directly inside these maps are property or schema names, and are kept.
+EXAMPLE_KEYS = frozenset(("example", "examples", "default", "const"))
+NAME_MAPS = frozenset(("properties", "patternProperties", "$defs", "definitions", "schemas", "dependentSchemas"))
 CACHE_PREFIX = "rowsmith/v1/"
 
 __all__ = ["__version__", "Rowsmith", "RowsmithError", "RowsmithResult", "request_body", "DEFAULT_URL", "USER_AGENT"]
@@ -84,6 +89,13 @@ class RowsmithResult:
         return int(value) if value is not None else None
 
     @property
+    def schema_unmapped(self):
+        """For a schema request: the paths of the properties the service could not map (X-Schema-Unmapped),
+        e.g. ["tags", "address.zip"]; an empty list when every property mapped or for a columns request."""
+        value = self.headers.get("x-schema-unmapped")
+        return value.split(",") if value else []
+
+    @property
     def reproduce(self):
         """The service's X-Reproduce line (CSV and SQL answers carry one; JSON answers do not, so for JSON
         this is the request that was sent, in the same form)."""
@@ -98,9 +110,101 @@ class RowsmithResult:
         return self.text
 
 
-def request_body(columns, rows=10, seed=1, format="json", table=None, version="1"):
+def strip_examples(value, names=False):
+    """A copy of a JSON Schema without example, examples, default, const and x-* keys (their values never leave
+    this machine). Keys directly inside properties, $defs, definitions and components.schemas are names, and kept."""
+    if isinstance(value, list):
+        return [strip_examples(v) for v in value]
+    if not isinstance(value, dict):
+        return value
+    out = {}
+    for k, v in value.items():
+        if not names and (k in EXAMPLE_KEYS or (isinstance(k, str) and k.startswith("x-"))):
+            continue
+        out[k] = strip_examples(v, not names and k in NAME_MAPS)
+    return out
+
+
+def _ref_target(ref):
+    """Mirrors Doc.lookup in the service (src/schemain.ts): (container, name) for a local $ref, else None.
+    #/$defs/X and #/definitions/X are read from the document root, #/components/schemas/X from
+    components.schemas; parts are unescaped (~1 is /, ~0 is ~) after splitting on /; refs over 512 UTF-16 units
+    are not followed."""
+    if not isinstance(ref, str) or not ref.startswith("#/") or len(ref.encode("utf-16-le")) // 2 > 512:
+        return None
+    parts = [p.replace("~1", "/").replace("~0", "~") for p in ref[2:].split("/")]
+    if len(parts) == 2 and parts[0] in ("$defs", "definitions"):
+        return parts[0], parts[1]
+    if len(parts) == 3 and parts[0] == "components" and parts[1] == "schemas":
+        return "components", parts[2]
+    return None
+
+
+def minimal_openapi(schema):
+    """For {"openapi": <document>, "component": <name>}: the same wrapper holding only the named component and the
+    schemas it reaches through local $refs (the forms the service follows), transitively and each once, so cycles
+    end. Kept schemas keep their names and paths and the document's order; paths, servers, security, info and
+    unreached schemas are not sent. Applied after strip_examples, so a $ref inside an example, default, const or
+    x-* value is never followed. A missing or non-local ref is not followed (the service reports it unmapped, as
+    with the full document). Any other input is returned as is."""
+    if not isinstance(schema, dict) or not isinstance(schema.get("component"), str) or not isinstance(schema.get("openapi"), dict):
+        return schema
+    if any(k not in ("openapi", "component") for k in schema):
+        return schema  # the service refuses it
+    doc = schema["openapi"]
+    comps = doc.get("components")
+    containers = {
+        "components": comps["schemas"] if isinstance(comps, dict) and isinstance(comps.get("schemas"), dict) else None,
+        "$defs": doc["$defs"] if isinstance(doc.get("$defs"), dict) else None,
+        "definitions": doc["definitions"] if isinstance(doc.get("definitions"), dict) else None,
+    }
+    reached = {"components": set(), "$defs": set(), "definitions": set()}
+    todo = [("components", schema["component"])]
+    while todo:
+        where, name = todo.pop()
+        container = containers[where]
+        if container is None or name in reached[where]:
+            continue
+        target = container.get(name)
+        if not isinstance(target, dict):
+            continue  # missing: left for the service to report
+        reached[where].add(name)
+        stack = [target]
+        while stack:
+            v = stack.pop()
+            if isinstance(v, list):
+                stack.extend(v)
+            elif isinstance(v, dict):
+                for k, x in v.items():
+                    t = _ref_target(x) if k == "$ref" else None
+                    if t:
+                        todo.append(t)
+                    else:
+                        stack.append(x)
+
+    def keep(where):
+        return {n: s for n, s in (containers[where] or {}).items() if n in reached[where]}
+
+    out = {}
+    if "openapi" in doc:
+        out["openapi"] = doc["openapi"]
+    out["components"] = {"schemas": keep("components")}
+    if reached["$defs"]:
+        out["$defs"] = keep("$defs")
+    if reached["definitions"]:
+        out["definitions"] = keep("definitions")
+    return {"openapi": out, "component": schema["component"]}
+
+
+def request_body(columns=None, rows=10, seed=1, format="json", table=None, version="1", schema=None):
     """The exact JSON bytes sent to POST /v1/generate. Key order is fixed, so the bytes (and the cache key,
-    their sha256) depend only on the arguments."""
+    their sha256) depend only on the arguments. Pass exactly one of ``columns`` (the column grammar) and
+    ``schema`` (a JSON Schema dict, e.g. a Pydantic ``model_json_schema()`` or Zod export, or
+    ``{"openapi": <document>, "component": "<name>"}``)."""
+    if (columns is None) == (schema is None):
+        raise ValueError("pass exactly one of columns and schema")
+    if schema is not None and not isinstance(schema, dict):
+        raise TypeError("schema must be a dict (a JSON Schema object)")
     if format not in FORMATS:
         raise ValueError("format must be one of %s, not %r" % (", ".join(FORMATS), format))
     if isinstance(seed, bool) or not isinstance(seed, int):
@@ -116,7 +220,10 @@ def request_body(columns, rows=10, seed=1, format="json", table=None, version="1
     body["seed"] = seed
     body["format"] = format
     body["version"] = version
-    body["columns"] = list(columns)
+    if schema is not None:
+        body["schema"] = minimal_openapi(strip_examples(schema))
+    else:
+        body["columns"] = list(columns)
     return json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
@@ -141,13 +248,13 @@ class Rowsmith:
         self.network_calls = 0
         self._memory = {}
 
-    def generate(self, columns, rows=10, seed=1, format="json", table=None, version="1"):
-        """Rows for csv and json (a list of dicts), the SQL text for sql."""
-        return self.fetch(columns, rows=rows, seed=seed, format=format, table=table, version=version).parsed()
+    def generate(self, columns=None, rows=10, seed=1, format="json", table=None, version="1", schema=None):
+        """Rows for csv and json (a list of dicts), the SQL text for sql. Pass columns or schema."""
+        return self.fetch(columns, rows=rows, seed=seed, format=format, table=table, version=version, schema=schema).parsed()
 
-    def fetch(self, columns, rows=10, seed=1, format="json", table=None, version="1"):
-        """The full answer (bytes, headers, reproduce line) as a RowsmithResult."""
-        body = request_body(columns, rows=rows, seed=seed, format=format, table=table, version=version)
+    def fetch(self, columns=None, rows=10, seed=1, format="json", table=None, version="1", schema=None):
+        """The full answer (bytes, headers, reproduce line) as a RowsmithResult. Pass columns or schema."""
+        body = request_body(columns, rows=rows, seed=seed, format=format, table=table, version=version, schema=schema)
         key = CACHE_PREFIX + hashlib.sha256(body).hexdigest()
         if key in self._memory:
             return self._memory[key]

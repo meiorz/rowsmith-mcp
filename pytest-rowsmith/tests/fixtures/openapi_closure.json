@@ -1,0 +1,92 @@
+{
+  "about": "Shared by the MCP closure test (test/schemain.test.ts in testdata-api) and the pytest-rowsmith tests. input is what a caller passes as schema; expected is what the clients send after removing example values and keeping only the component's $ref closure.",
+  "input": {
+    "openapi": {
+      "openapi": "3.0.3",
+      "info": { "title": "Shop", "version": "1", "contact": { "email": "owner.realperson@gmail.com" } },
+      "servers": [{ "url": "https://internal.shop.example/api" }],
+      "security": [{ "bearer": [] }],
+      "paths": {
+        "/orders": { "get": { "responses": { "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Unused" } } } } } } }
+      },
+      "components": {
+        "securitySchemes": { "bearer": { "type": "http", "scheme": "bearer" } },
+        "schemas": {
+          "Unused": { "type": "object", "properties": { "internal_code": { "type": "string" } } },
+          "Order": {
+            "type": "object",
+            "properties": {
+              "orderId": { "type": "integer", "minimum": 1 },
+              "status": { "$ref": "#/components/schemas/Status" },
+              "customer": { "$ref": "#/components/schemas/Customer" },
+              "total": { "$ref": "#/$defs/Money" },
+              "region": { "$ref": "#/components/schemas/a~1b" },
+              "ghost": { "$ref": "#/components/schemas/Ghost" },
+              "remote": { "$ref": "https://example.com/schemas/remote.json" },
+              "note": { "type": "string", "default": { "$ref": "#/components/schemas/Secret" } }
+            },
+            "example": { "$ref": "#/components/schemas/Secret" },
+            "x-linked": { "$ref": "#/definitions/SecretDef" }
+          },
+          "Status": { "type": "string", "enum": ["placed", "shipped"] },
+          "Customer": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "examples": [{ "$ref": "#/components/schemas/Secret" }] },
+              "email": { "type": "string", "format": "email" },
+              "referrer": { "$ref": "#/components/schemas/Customer" },
+              "address": { "$ref": "#/components/schemas/Address" }
+            }
+          },
+          "Address": { "type": "object", "properties": { "city": { "type": "string" } } },
+          "Secret": { "type": "object", "properties": { "pin": { "type": "string" } } },
+          "a/b": { "type": "string", "enum": ["north", "south"] }
+        }
+      },
+      "$defs": {
+        "UnusedDef": { "type": "boolean" },
+        "Money": { "type": "number", "minimum": 0, "maximum": 500, "multipleOf": 0.01 }
+      },
+      "definitions": { "SecretDef": { "type": "string" } }
+    },
+    "component": "Order"
+  },
+  "expected": {
+    "openapi": {
+      "openapi": "3.0.3",
+      "components": {
+        "schemas": {
+          "Order": {
+            "type": "object",
+            "properties": {
+              "orderId": { "type": "integer", "minimum": 1 },
+              "status": { "$ref": "#/components/schemas/Status" },
+              "customer": { "$ref": "#/components/schemas/Customer" },
+              "total": { "$ref": "#/$defs/Money" },
+              "region": { "$ref": "#/components/schemas/a~1b" },
+              "ghost": { "$ref": "#/components/schemas/Ghost" },
+              "remote": { "$ref": "https://example.com/schemas/remote.json" },
+              "note": { "type": "string" }
+            }
+          },
+          "Status": { "type": "string", "enum": ["placed", "shipped"] },
+          "Customer": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "email": { "type": "string", "format": "email" },
+              "referrer": { "$ref": "#/components/schemas/Customer" },
+              "address": { "$ref": "#/components/schemas/Address" }
+            }
+          },
+          "Address": { "type": "object", "properties": { "city": { "type": "string" } } },
+          "a/b": { "type": "string", "enum": ["north", "south"] }
+        }
+      },
+      "$defs": {
+        "Money": { "type": "number", "minimum": 0, "maximum": 500, "multipleOf": 0.01 }
+      }
+    },
+    "component": "Order"
+  }
+}

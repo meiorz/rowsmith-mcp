@@ -40,22 +40,39 @@ def test_orders(rowsmith):
 The column types and their options are listed at https://testdata-api.re-jam620.workers.dev/v1/types; the full
 API is described at https://testdata-api.re-jam620.workers.dev/openapi.json.
 
+### From your own schema
+Instead of `columns`, pass `schema=`: a JSON Schema dict (type object with properties), such as a Pydantic
+model's `model_json_schema()` or a Zod export, or an OpenAPI component as
+`{"openapi": <document dict>, "component": "Order"}`. The service maps it to columns; properties it cannot map
+(arrays, patterns and other unsupported forms) are left out, never guessed, and listed in
+`fetch(...).schema_unmapped`. Before sending, the plugin removes `example`, `examples`, `default`, `const` and `x-*`
+keys from the schema, so their values do not leave your machine; the service ignores them too.
+For an OpenAPI component, only the named component and the schemas it references are sent.
+```python
+from myapp.models import User  # a Pydantic model
+
+def test_users(rowsmith):
+    users = rowsmith.generate(schema=User.model_json_schema(), rows=20, seed=42)
+    assert len(users) == 20
+```
+
 ## The fixture
 `rowsmith` is session-scoped. Its methods take the same arguments:
 
 | Argument | Default | Meaning |
 |---|---|---|
-| `columns` | (required) | list of column definitions, as in the API |
+| `columns` | | list of column definitions, as in the API; pass `columns` or `schema` |
+| `schema` | | a JSON Schema dict, or `{"openapi": ..., "component": ...}`; pass `columns` or `schema` |
 | `rows` | `10` | 1 to 500 |
 | `seed` | `1` | always sent, so every call is reproducible |
 | `format` | `"json"` | `"csv"`, `"json"` or `"sql"` |
 | `table` | not sent | table name (used in SQL output) |
 | `version` | `"1"` | generator version, always sent |
 
-- `rowsmith.generate(columns, ...)` returns a list of dicts for `json` (values typed as in the JSON) and `csv`
+- `rowsmith.generate(columns, ...)` (or `generate(schema=..., ...)`) returns a list of dicts for `json` (values typed as in the JSON) and `csv`
   (values are strings), and the SQL text for `sql`.
 - `rowsmith.fetch(columns, ...)` returns a `RowsmithResult` with `body` (the exact bytes), `text`, `sha256`,
-  `headers`, `generator_version`, `seed`, `reproduce`, `from_cache` and `parsed()`. `reproduce` is the service's
+  `headers`, `generator_version`, `seed`, `reproduce`, `schema_unmapped`, `from_cache` and `parsed()`. `reproduce` is the service's
   X-Reproduce line (sent with CSV and SQL answers, and kept in the cache); JSON answers carry none, so for them it
   is the request that was sent, in the same form.
 - On anything other than a successful answer the call raises `pytest_rowsmith.RowsmithError`. Its message names
@@ -67,8 +84,9 @@ API is described at https://testdata-api.re-jam620.workers.dev/openapi.json.
 
 ## Caching and offline runs
 Answers are stored in pytest's own cache (`.pytest_cache/v/rowsmith/v1/` in your project), one entry per request,
-keyed by the sha256 of the exact request-body bytes. An entry holds the response bytes and four headers
-(content-type, x-generator-version, x-seed, x-reproduce). A suite therefore calls the API once per distinct
+keyed by the sha256 of the exact request-body bytes. An entry holds the response bytes and the headers
+content-type, x-generator-version, x-seed and x-reproduce, plus x-schema-version and x-schema-unmapped for a
+schema request. A suite therefore calls the API once per distinct
 request and then runs offline, as long as `.pytest_cache` is kept. A damaged entry is fetched again.
 
 - `pytest --rowsmith-refresh` ignores the cache: each distinct request is sent once in that run and its entry is

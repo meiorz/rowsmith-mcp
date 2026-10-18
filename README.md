@@ -36,7 +36,7 @@ It is a thin client of the public Rowsmith API, free and rate-limited.
 ## Tools
 | Tool | What it does |
 |---|---|
-| `generate_test_data` | `columns` (1-50), optional `rows` (1-500), `seed`, `format` (`csv`, `json`, `sql`), `table`, `output_path`, `overwrite`, `chaos` |
+| `generate_test_data` | `columns` (1-50) or `schema` (a JSON Schema object, or `{openapi, component}`), optional `rows` (1-500), `seed`, `format` (`csv`, `json`, `sql`), `table`, `output_path`, `overwrite`, `chaos` |
 | `list_column_types` | the supported column types and their options |
 | `invalid_values` | invalid-on-purpose TEST DATA values with the reason each is invalid: `kind` (`email`, `card`, `address`, `unicode`, `iban`, `ssn`, `all`), `count`, `seed`, `fields`, `chaos` |
 | `sandbox_create` (listed only when the service advertises the sandbox) | create a payment sandbox (TEST DATA; deleted 1 hour after creation): optional `seed` |
@@ -45,14 +45,23 @@ It is a thin client of the public Rowsmith API, free and rate-limited.
 At startup the server reads `/pricing.json` once (30 s timeout, cached for the process) and lists the
 two sandbox tools only if the service advertises `/v1/sandbox` there. If that request fails, the sandbox tools stay
 hidden and the server's instructions and `list_column_types` output say why; restart to check again. Tool-definition size, measured as characters of
-the `tools/list` JSON (names, titles, descriptions and input schemas) divided by 4: 3 tools, about 1163 tokens
-(4650 characters); 5 tools, about 1771 tokens (7083 characters). Measure with `node scripts/tool-tokens.js`.
+the `tools/list` JSON (names, titles, descriptions and input schemas) divided by 4: 3 tools, about 1233 tokens
+(4932 characters); 5 tools, about 1842 tokens (7365 characters). Measure with `node scripts/tool-tokens.js`.
 
 For more than about 50 rows, pass `output_path`: the server writes the file and returns a summary (rows, bytes,
 sha256, the header line) instead of putting the data in the model's context. Files can only be written inside the
 write root: the server's working directory by default, or `ROWSMITH_OUT_DIR` when set (which moves or narrows it).
 Paths with `..` segments or outside the root are refused, and an existing file is replaced only with
 `overwrite: true`.
+
+Instead of `columns`, `generate_test_data` takes `schema`: a JSON Schema object (type object with properties), such
+as a Pydantic (`model_json_schema()`) or Zod export, or an OpenAPI component as `{"openapi": <document>,
+"component": "Order"}`. The service maps it to columns and names the properties it could not map (arrays, patterns
+and other unsupported forms) at the end of the result; nothing is guessed. Before sending, the server removes
+`example`, `examples`, `default`, `const` and `x-*` keys from the schema, so their values do not leave your machine
+and are not in the reproduce curl; the service ignores them too. For an OpenAPI component, only the named component and the schemas it
+references are sent. The mapping is described at
+https://testdata-api.re-jam620.workers.dev/openapi.json.
 
 The tools form a chain, and each description says which comes next: `generate_test_data` first (with
 `list_column_types` for a type's options), then `invalid_values` for values your code should reject, then

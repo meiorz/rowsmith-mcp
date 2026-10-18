@@ -222,3 +222,100 @@ def test_network_error_retries_once_then_fails_clearly():
 
 def test_default_timeout_is_30_seconds():
     assert Rowsmith().timeout == 30.0
+
+
+# A Pydantic-style export with real-looking values in example, examples, default, const and x-* keys.
+SCHEMA = {
+    "title": "User",
+    "type": "object",
+    "examples": [{"email": "jane.realperson@gmail.com"}],
+    "x-owner": "Janet Realperson",
+    "properties": {
+        "id": {"type": "string", "format": "uuid"},
+        "email": {"anyOf": [{"type": "string", "format": "email"}, {"type": "null"}], "default": "jane.realperson@gmail.com"},
+        "default": {"type": "string", "const": "fixed", "x-faker": "name"},
+        "tags": {"type": "array", "items": {"type": "string", "example": "vip"}},
+    },
+    "$defs": {"examples": {"type": "integer", "default": 3}},
+}
+SENT_SCHEMA = {
+    "title": "User",
+    "type": "object",
+    "properties": {
+        "id": {"type": "string", "format": "uuid"},
+        "email": {"anyOf": [{"type": "string", "format": "email"}, {"type": "null"}]},
+        "default": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+    },
+    "$defs": {"examples": {"type": "integer"}},
+}
+
+
+def test_schema_is_sent_instead_of_columns_without_example_or_default_values(stub):
+    before = json.dumps(SCHEMA)
+    stub.answer(200, JSON_BODY, {"content-type": "application/json", "x-generator-version": "1", "x-seed": "4",
+                                 "x-schema-version": "1", "x-schema-unmapped": "tags,address.zip"})
+    res = client(stub).fetch(schema=SCHEMA, rows=2, seed=4)
+    assert json.dumps(SCHEMA) == before  # the caller's dict is not changed
+    (r,) = stub.requests
+    assert json.loads(r["body"]) == {"rows": 2, "seed": 4, "format": "json", "version": "1", "schema": SENT_SCHEMA}
+    assert r["body"] == request_body(schema=SCHEMA, rows=2, seed=4)
+    for planted in (b"realperson", b"Realperson", b"vip", b"fixed", b"x-faker", b"x-owner"):
+        assert planted not in r["body"]
+    assert res.schema_unmapped == ["tags", "address.zip"]
+    assert res.headers["x-schema-version"] == "1"
+    # A JSON answer carries no X-Reproduce, so the reproduce line is the request sent: without the planted values.
+    assert b"realperson" not in base64.urlsafe_b64decode(res.reproduce.split("=", 1)[1] + "==")
+    assert client(stub).fetch(COLUMNS).schema_unmapped == []
+
+
+def test_schema_requests_are_cached_by_the_sent_bytes(stub):
+    cache = DictCache()
+    first = client(stub, cache=cache).generate(schema=SCHEMA, format="csv")
+    key = "rowsmith/v1/" + hashlib.sha256(request_body(schema=SCHEMA, format="csv")).hexdigest()
+    assert list(cache.data) == [key]
+    offline = Rowsmith(base_url="http://127.0.0.1:9", cache=cache, retry_delay=0)
+    assert offline.generate(schema=SCHEMA, format="csv") == first
+    assert offline.network_calls == 0
+
+
+def test_exactly_one_of_columns_and_schema_before_any_call(stub):
+    rs = client(stub)
+    with pytest.raises(ValueError):
+        rs.generate()
+    with pytest.raises(ValueError):
+        rs.generate(COLUMNS, schema=SCHEMA)
+    with pytest.raises(TypeError):
+        rs.generate(schema="CREATE TABLE t (id int)")
+    assert stub.requests == []
+
+
+FIXTURE = json.loads((ROOT / "tests" / "fixtures" / "openapi_closure.json").read_text(encoding="utf-8"))
+
+
+def test_openapi_component_sends_only_its_ref_closure_shared_fixture(stub):
+    from pytest_rowsmith import minimal_openapi, strip_examples
+
+    closure = minimal_openapi(strip_examples(FIXTURE["input"]))
+    # Same bytes as the shared fixture's expected closure (key order included), which the vitest suite runs
+    # through the Worker against the full document for byte-identical output.
+    assert json.dumps(closure) == json.dumps(FIXTURE["expected"])
+    client(stub).generate(schema=FIXTURE["input"], rows=2)
+    body = stub.requests[0]["body"]
+    assert json.dumps(json.loads(body)["schema"]) == json.dumps(FIXTURE["expected"])
+    for gone in (b"paths", b"servers", b"security", b"info", b"Unused", b"Secret", b"realperson"):
+        assert gone not in body
+
+
+def test_openapi_closure_ends_on_cycles():
+    from pytest_rowsmith import minimal_openapi
+
+    schemas = {
+        "S%d" % i: {"type": "object", "properties": {"next": {"$ref": "#/components/schemas/S%d" % ((i + 1) % 200)},
+                                                     "self": {"$ref": "#/components/schemas/S%d" % i}}}
+        for i in range(200)
+    }
+    r = minimal_openapi({"openapi": {"openapi": "3.1.0", "paths": {"/x": {}}, "components": {"schemas": schemas}}, "component": "S5"})
+    assert len(r["openapi"]["components"]["schemas"]) == 200
+    assert list(r["openapi"]) == ["openapi", "components"]
+    assert minimal_openapi({"type": "object"}) == {"type": "object"}

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { BASE_URL, createServer, generate, invalidValues, listTypes, resolveOutputPath, SANDBOX_CHECK_FAILED_NOTE, resetSandboxStatus, sandboxAdvertised, sandboxCreate, sandboxPayments, sandboxStatus } from "../server.js";
+import { BASE_URL, createServer, generate, invalidValues, minimalOpenapi, listTypes, resolveOutputPath, SANDBOX_CHECK_FAILED_NOTE, resetSandboxStatus, sandboxAdvertised, sandboxCreate, sandboxPayments, sandboxStatus } from "../server.js";
 import { measureTools } from "../scripts/tool-tokens.js";
 
 const realFetch = globalThis.fetch;
@@ -199,11 +199,70 @@ async function createServerTool(options, name) {
   return out;
 }
 
-test("generate_test_data keeps its schema", async () => {
+test("generate_test_data keeps its schema, with columns or schema (neither required by the tool; the service refuses both or neither)", async () => {
   const tools = await listed();
   const gen = tools.find((t) => t.name === "generate_test_data");
-  assert.deepEqual(gen.inputSchema.required, ["columns"]);
-  assert.ok("output_path" in gen.inputSchema.properties);
+  assert.equal(gen.inputSchema.required, undefined);
+  for (const k of ["columns", "schema", "rows", "seed", "format", "table", "output_path", "overwrite", "chaos"]) assert.ok(k in gen.inputSchema.properties, k);
+  assert.equal(gen.inputSchema.properties.schema.type, "object");
+});
+
+test("a schema is sent without example, examples, default, const or x-* keys; property and schema names are kept", async () => {
+  const seen = fake(200, "id\r\n1\r\n", { ...OK_HEADERS, "x-schema-version": "1", "x-schema-unmapped": "tags,address.zip" });
+  const schema = {
+    type: "object",
+    examples: [{ email: "jane.realperson@gmail.com" }],
+    "x-internal": "Janet Realperson",
+    properties: {
+      email: { type: "string", format: "email", example: "jane.realperson@gmail.com", default: "jane@gmail.com" },
+      default: { type: "string", const: "fixed" },
+      example: { $ref: "#/$defs/Example" },
+      "x-trace": { type: "string", "x-faker": "name.fullName" },
+      tags: { type: "array", items: { type: "string", examples: ["vip"] } },
+    },
+    $defs: { Example: { type: "boolean", default: true }, examples: { type: "integer" } },
+  };
+  const before = JSON.stringify(schema);
+  const out = await generate({ rows: 1, seed: 7, schema });
+  assert.equal(JSON.stringify(schema), before, "the caller's object is not changed");
+  const sent = JSON.parse(seen[0].init.body);
+  assert.deepEqual(sent, {
+    rows: 1,
+    seed: 7,
+    schema: {
+      type: "object",
+      properties: {
+        email: { type: "string", format: "email" },
+        default: { type: "string" },
+        example: { $ref: "#/$defs/Example" },
+        "x-trace": { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+      },
+      $defs: { Example: { type: "boolean" }, examples: { type: "integer" } },
+    },
+  });
+  const text = out.content.map((c) => c.text).join("\n");
+  assert.doesNotMatch(text, /realperson|Realperson|vip|fixed|faker/);
+  assert.match(text, /Schema mapping 1; left out \(not mappable\): tags,address\.zip\.\n/);
+  const curl = text.split("\n").at(-1);
+  assert.ok(curl.startsWith("Reproduce: curl "), curl);
+  assert.deepEqual(JSON.parse(curl.slice(curl.indexOf("-d '") + 4, -1)).schema, sent.schema);
+});
+
+test("the schema argument passes through the MCP client unchanged apart from the removed keys", async () => {
+  const seen = fake(200, "a\r\ntrue\r\n", { ...OK_HEADERS, "x-schema-version": "1" });
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const server = createServer();
+  await server.connect(serverSide);
+  const client = new Client({ name: "test", version: "0" });
+  await client.connect(clientSide);
+  const schema = { type: "object", properties: { a: { type: "boolean", default: false } }, required: ["a"] };
+  const out = await client.callTool({ name: "generate_test_data", arguments: { rows: 1, schema } });
+  await client.close();
+  await server.close();
+  assert.equal(out.isError, undefined);
+  assert.deepEqual(JSON.parse(seen[0].init.body), { rows: 1, schema: { type: "object", properties: { a: { type: "boolean" } }, required: ["a"] } });
+  assert.match(out.content.at(-1).text, /Schema mapping 1; every property mapped\./);
 });
 
 test("the published tool-definition sizes match the measurement (characters / 4), for 3 and 5 tools", async () => {
@@ -225,7 +284,7 @@ test("server.json and the package description describe only what is live with th
   for (const f of ["../server.json", "../package.json"]) {
     const text = await readFile(new URL(f, import.meta.url), "utf8");
     assert.doesNotMatch(text, /sandbox|payment|charge|refund/i, f);
-    assert.match(text, /"version": "0\.2\.\d+"/, f);
+    assert.match(text, /"version": "0\.3\.\d+"/, f);
   }
   // The registry entry names a published npm version; server.json follows package.json.
   const server = JSON.parse(await readFile(new URL("../server.json", import.meta.url), "utf8"));
@@ -270,4 +329,22 @@ test("sandbox tools route each action, and say plainly when the sandbox is not o
   assert.match((await sandboxCreate({})).content[0].text, /not open/);
   fake(404, JSON.stringify({ error: "No such sandbox.", next: "Create one." }), { "x-rowsmith-sandbox": "test" });
   assert.match((await sandboxPayments({ sandbox_id: id, action: "list" })).content[0].text, /No such sandbox\. Next: Create one\./);
+});
+
+test("for an OpenAPI component, only the component and the schemas it references are sent (shared fixture)", async () => {
+  const fixture = JSON.parse(await readFile(new URL("../pytest-rowsmith/tests/fixtures/openapi_closure.json", import.meta.url), "utf8"));
+  const seen = fake(200, "id\r\n1\r\n", { ...OK_HEADERS, "x-schema-version": "1" });
+  const out = await generate({ rows: 2, schema: fixture.input });
+  const body = seen[0].init.body;
+  assert.equal(JSON.stringify(JSON.parse(body).schema), JSON.stringify(fixture.expected));
+  for (const gone of ["paths", "servers", "security", "info", "Unused", "Secret", "realperson"]) assert.ok(!body.includes(gone), gone);
+  assert.ok(!out.content.map((c) => c.text).join("\n").includes("realperson"));
+});
+
+test("the OpenAPI closure ends on $ref cycles", () => {
+  const schemas = {};
+  for (let i = 0; i < 200; i++) schemas[`S${i}`] = { type: "object", properties: { next: { $ref: `#/components/schemas/S${(i + 1) % 200}` }, self: { $ref: `#/components/schemas/S${i}` } } };
+  const r = minimalOpenapi({ openapi: { openapi: "3.1.0", paths: { "/x": {} }, components: { schemas } }, component: "S5" });
+  assert.equal(Object.keys(r.openapi.components.schemas).length, 200);
+  assert.deepEqual(Object.keys(r.openapi), ["openapi", "components"]);
 });

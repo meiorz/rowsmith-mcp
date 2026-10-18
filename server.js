@@ -21,7 +21,8 @@ const column = z
   .passthrough();
 
 export const generateInput = {
-  columns: z.array(column).min(1).max(50).describe("The table's columns, 1 to 50"),
+  columns: z.array(column).min(1).max(50).optional().describe("The table's columns, 1 to 50"),
+  schema: z.object({}).passthrough().optional().describe("Instead of columns: a JSON Schema object, or {openapi: <document>, component: <name>}"),
   rows: z.number().int().min(1).max(500).optional().describe("Number of rows, 1 to 500 (default 100)"),
   seed: z.number().int().min(0).max(4294967295).optional().describe("Seed; the same schema and seed give identical output for the same generator version (default 1)"),
   format: z.enum(["csv", "json", "sql"]).optional().describe("Output format (default csv)"),
@@ -118,8 +119,96 @@ function headerLine(body, format) {
   return body.split(/\r?\n/, 1)[0] ?? "";
 }
 
+// Schema keys whose values are examples or defaults. They are removed before a schema is sent, so they never leave
+// this machine or appear in the reproduce curl; the service ignores them anyway. Keys directly inside properties,
+// $defs, definitions and components.schemas are property and schema names, and are kept.
+const EXAMPLE_KEYS = new Set(["example", "examples", "default", "const"]);
+const NAME_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions", "schemas", "dependentSchemas"]);
+export function stripExamples(value, names = false) {
+  if (Array.isArray(value)) return value.map((v) => stripExamples(v));
+  if (value === null || typeof value !== "object") return value;
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (!names && (EXAMPLE_KEYS.has(k) || k.startsWith("x-"))) continue;
+    out[k] = stripExamples(v, !names && NAME_MAPS.has(k));
+  }
+  return out;
+}
+
+const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const ownValue = (o, k) => (Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined);
+
+// Mirrors Doc.lookup in the service (src/schemain.ts): the container and name a local $ref points at, or null.
+// #/$defs/X and #/definitions/X are read from the document root, #/components/schemas/X from components.schemas;
+// each part is unescaped (~1 is /, ~0 is ~) after splitting on /, and refs over 512 characters are not followed.
+function refTarget(ref) {
+  if (typeof ref !== "string" || !ref.startsWith("#/") || ref.length > 512) return null;
+  const parts = ref.slice(2).split("/").map((x) => x.replace(/~1/g, "/").replace(/~0/g, "~"));
+  if (parts.length === 2 && (parts[0] === "$defs" || parts[0] === "definitions")) return [parts[0], parts[1]];
+  if (parts.length === 3 && parts[0] === "components" && parts[1] === "schemas") return ["components", parts[2]];
+  return null;
+}
+
+/**
+ * For {openapi: <document>, component: <name>}: the same wrapper holding only the named component and the schemas
+ * it reaches through local $refs (the forms the service follows), transitively and each once, so cycles end. Every
+ * kept schema keeps its name and path (components.schemas.<name>, $defs.<name>, definitions.<name>) and the
+ * document's order. Paths, servers, security, info and unreached schemas stay on this machine. Run it after
+ * stripExamples, so a $ref inside an example, default, const or x-* value is never followed. A missing or non-local
+ * ref is simply not followed; the service reports it unmapped as with the full document. Other input is returned
+ * as is.
+ */
+export function minimalOpenapi(schema) {
+  if (!isPlainObject(schema) || typeof schema.component !== "string" || !isPlainObject(schema.openapi)) return schema;
+  if (Object.keys(schema).some((k) => k !== "openapi" && k !== "component")) return schema; // the service refuses it
+  const doc = schema.openapi;
+  const comps = ownValue(doc, "components");
+  const containers = {
+    components: isPlainObject(comps) && isPlainObject(ownValue(comps, "schemas")) ? comps.schemas : undefined,
+    $defs: isPlainObject(ownValue(doc, "$defs")) ? doc.$defs : undefined,
+    definitions: isPlainObject(ownValue(doc, "definitions")) ? doc.definitions : undefined,
+  };
+  const reached = { components: new Set(), $defs: new Set(), definitions: new Set() };
+  const todo = [["components", schema.component]];
+  while (todo.length) {
+    const [where, name] = todo.pop();
+    const container = containers[where];
+    if (!container || reached[where].has(name)) continue;
+    const target = ownValue(container, name);
+    if (!isPlainObject(target)) continue; // missing: left for the service to report
+    reached[where].add(name);
+    const stack = [target];
+    while (stack.length) {
+      const v = stack.pop();
+      if (Array.isArray(v)) stack.push(...v);
+      else if (isPlainObject(v))
+        for (const [k, x] of Object.entries(v)) {
+          const t = k === "$ref" ? refTarget(x) : null;
+          if (t) todo.push(t);
+          else stack.push(x);
+        }
+    }
+  }
+  const keep = (where) => Object.fromEntries(Object.keys(containers[where] ?? {}).filter((n) => reached[where].has(n)).map((n) => [n, containers[where][n]]));
+  const out = {};
+  if (doc.openapi !== undefined) out.openapi = doc.openapi;
+  out.components = { schemas: keep("components") };
+  if (reached.$defs.size) out.$defs = keep("$defs");
+  if (reached.definitions.size) out.definitions = keep("definitions");
+  return { openapi: out, component: schema.component };
+}
+
+/** For a schema request: the mapping version and the properties that were left out (X-Schema-Unmapped). */
+function schemaLine(headers) {
+  const version = headers.get("x-schema-version");
+  if (!version) return "";
+  const unmapped = headers.get("x-schema-unmapped");
+  return `Schema mapping ${version}; ${unmapped ? `left out (not mappable): ${unmapped}` : "every property mapped"}.\n`;
+}
+
 export async function generate(args) {
   const { output_path, overwrite, chaos, ...request } = args;
+  if (request.schema !== undefined) request.schema = minimalOpenapi(stripExamples(request.schema));
   let target;
   if (output_path !== undefined) {
     const r = resolveOutputPath(output_path);
@@ -135,6 +224,7 @@ export async function generate(args) {
   const provenance =
     `(generator ${r.headers.get("x-generator-version")}, ${r.headers.get("x-prng")}, seed ${r.headers.get("x-seed")}; ` +
     `generated fake data, see ${BASE_URL}/terms)\n` +
+    schemaLine(r.headers) +
     (chaos?.empty_result ? "Reproduce: not available, because empty_result was requested." : reproduceCurl(request, r.headers));
   if (target === undefined) return { content: [{ type: "text", text: r.text }, { type: "text", text: provenance }] };
 
@@ -302,7 +392,8 @@ export function createServer({ sandbox = false, sandboxCheckFailed = false } = {
       title: "Generate test data",
       description:
         "Generate realistic fake test data (CSV, JSON or SQL INSERTs) from a table schema. Use it first, when you need " +
-        "rows for fixtures, seed data or tests (list_column_types gives each type's options). Next: invalid_values for " +
+        "rows for fixtures, seed data or tests (list_column_types gives each type's options). Or pass schema (JSON Schema, e.g. a " +
+        "Pydantic or Zod export, or an OpenAPI component) instead of columns; unmappable fields are named. Next: invalid_values for " +
         `values your code should reject${sandbox ? ", then sandbox_create and sandbox_payments to test a payment flow" : ""}. ` +
         "Free and rate-limited: up to " +
         "500 rows and 50 columns per call. No real person's data is used as input and no record is derived from a real " +
