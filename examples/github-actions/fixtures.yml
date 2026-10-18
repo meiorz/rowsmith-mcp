@@ -1,0 +1,20 @@
+# Copy to .github/workflows/ in your repo. Writes a fixture file before your tests run.
+name: tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned to a release tag, so later changes to the Action reach you only when you move the pin.
+      # For trying it out, meiorz/rowsmith-mcp/fixtures@main follows the latest commit.
+      - uses: meiorz/rowsmith-mcp/fixtures@v0.2.2
+        with:
+          schema: test/schema.json   # a columns array, or a full /v1/generate request
+          seed: "42"
+          rows: "100"
+          format: csv
+          out: test/fixtures/orders.csv
+      - run: npm test
