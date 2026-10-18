@@ -22,7 +22,12 @@ of use (https://testdata-api.re-jam620.workers.dev/terms) and count against your
 ```sh
 pip install pytest-rowsmith
 ```
-pytest loads the plugin automatically. Python 3.9 or later.
+Or from the public repository at the plugin's release tag pytest-rowsmith-v0.1.0:
+```sh
+pip install "git+https://github.com/meiorz/rowsmith-mcp@pytest-rowsmith-v0.1.0#subdirectory=pytest-rowsmith"
+```
+The install from the repository needs git and network access to PyPI for the build tool (setuptools); nothing is
+compiled. pytest loads the plugin automatically. Python 3.9 or later.
 
 ## Example
 ```python
