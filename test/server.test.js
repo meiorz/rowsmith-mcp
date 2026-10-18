@@ -375,3 +375,12 @@ test("the OpenAPI closure ends on $ref cycles", () => {
   assert.equal(Object.keys(r.openapi.components.schemas).length, 200);
   assert.deepEqual(Object.keys(r.openapi), ["openapi", "components"]);
 });
+
+test("the package test run covers test/*.test.js only, so no example (which calls the live API) runs in the check", async () => {
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(pkg.scripts.test, "node --test test/*.test.js");
+  const { readdir } = await import("node:fs/promises");
+  const examples = (await readdir(new URL("../examples/", import.meta.url), { recursive: true })).map((f) => "examples/" + String(f).split("\\").join("/"));
+  assert.ok(examples.some((f) => f.endsWith(".test.mjs")), "the live example still exists, run by hand");
+  for (const f of examples) assert.ok(!f.startsWith("test/"), f + " would be matched by the test script");
+});

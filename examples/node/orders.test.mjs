@@ -1,4 +1,5 @@
 // node --test examples/node/orders.test.mjs  (Node 18+, no dependencies)
+// Calls the live Rowsmith API twice. Run it by hand; it is not part of the package's own test run.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
