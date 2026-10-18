@@ -102,7 +102,7 @@ Example call:
 `schema` (path to a JSON file holding a columns array or a full request), `out` (the file to write), and optional
 `seed`, `rows` and `format` (csv, json or sql), which replace the file's values when given. On any answer other
 than 200 the step fails with the service's error and its `next` step. Nothing is cached, and no key is needed.
-Use the tag `meiorz/rowsmith-mcp/fixtures@v0.2.2` (or @main to try the latest).
+Use the tag `meiorz/rowsmith-mcp/fixtures@v0.2.3` (or @main to try the latest).
 
 ```yaml
 name: fixtures
@@ -112,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: meiorz/rowsmith-mcp/fixtures@v0.2.2
+      - uses: meiorz/rowsmith-mcp/fixtures@v0.2.3
         with:
           schema: test/fixtures/orders.schema.json
           seed: "42"
@@ -133,7 +133,7 @@ The same schema and seed give byte-identical output for the same generator versi
 every run until the generator version changes. The step's `generator-version` output reports the version used.
 Each run counts against the daily limit of the runner's address. GitHub-hosted runners share addresses, so the limit can be reached by other users' runs.
 
-Optional `extra-header` (on @main; not in v0.2.2) adds one request header, as `Name: value` in printable ASCII. It
+Optional `extra-header` (since v0.2.3; not in v0.2.2) adds one request header, as `Name: value` in printable ASCII. It
 is empty by default, which sends no extra header.
 
 `.github/workflows/canary.yml` is our hourly uptime check: it sends the fixed canary request (the golden request,

@@ -15,7 +15,7 @@ never real data.
 Pin `"version"` in the request to keep the bytes fixed when the generator changes; a version the service no longer
 serves is refused with 409, never answered with different bytes.
 
-Pin the fixtures Action to a release tag (`meiorz/rowsmith-mcp/fixtures@v0.2.2`), not `@main`, so later changes to
+Pin the fixtures Action to a release tag (`meiorz/rowsmith-mcp/fixtures@v0.2.3`), not `@main`, so later changes to
 the Action reach your workflow only when you move the pin.
 
 Set a User-Agent header on your requests. Python's standard-library urllib is blocked by Cloudflare before it reaches

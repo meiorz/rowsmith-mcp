@@ -10,7 +10,7 @@ jobs:
       - uses: actions/checkout@v4
       # Pinned to a release tag, so later changes to the Action reach you only when you move the pin.
       # For trying it out, meiorz/rowsmith-mcp/fixtures@main follows the latest commit.
-      - uses: meiorz/rowsmith-mcp/fixtures@v0.2.2
+      - uses: meiorz/rowsmith-mcp/fixtures@v0.2.3
         with:
           schema: test/schema.json   # a columns array, or a full /v1/generate request
           seed: "42"
