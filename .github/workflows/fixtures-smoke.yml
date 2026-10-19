@@ -17,6 +17,8 @@ jobs:
           rows: "20"
           format: csv
           out: orders.csv
+          # Our own test run: the service counts it as team traffic, not as an outside caller (cycle 8 A2).
+          extra-header: "x-rowsmith-team: ci"
       - run: |
           head -3 orders.csv
           test "$(sed -n 2p orders.csv | cut -d, -f1)" = "ord_0001"
