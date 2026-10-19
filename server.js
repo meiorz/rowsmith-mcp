@@ -8,7 +8,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 export const BASE_URL = (process.env.ROWSMITH_URL ?? "https://testdata-api.re-jam620.workers.dev").replace(/\/+$/, "");
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 const TIMEOUT_MS = 30_000;
 
 const TYPES =
@@ -27,6 +27,12 @@ export const generateInput = {
   seed: z.number().int().min(0).max(4294967295).optional().describe("Seed; the same schema and seed give identical output for the same generator version (default 1)"),
   format: z.enum(["csv", "json", "sql"]).optional().describe("Output format (default csv)"),
   table: z.string().optional().describe("Table name, used in SQL output (default data)"),
+  tables: z
+    .array(z.object({ name: z.string() }).passthrough())
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Instead of columns, schema, rows, table: related tables in order, each {name, rows, columns or schema}. A column {name, type: 'ref', table, column} takes its values from an earlier table's primary key (uuid or sequence named id). Format sql or json; 500 rows in total"),
   output_path: z
     .string()
     .optional()
@@ -209,13 +215,18 @@ function schemaLine(headers) {
 export async function generate(args) {
   const { output_path, overwrite, chaos, ...request } = args;
   if (request.schema !== undefined) request.schema = minimalOpenapi(stripExamples(request.schema));
+  // tables: related tables in one call (POST /v1/dataset); each table's schema is cleaned like a single schema.
+  const dataset = request.tables !== undefined;
+  if (dataset)
+    request.tables = request.tables.map((t) => (t && typeof t === "object" && t.schema !== undefined ? { ...t, schema: minimalOpenapi(stripExamples(t.schema)) } : t));
+  const path = dataset ? "/v1/dataset" : "/v1/generate";
   let target;
   if (output_path !== undefined) {
     const r = resolveOutputPath(output_path);
     if (r.error) return fail(r.error);
     target = r.path;
   }
-  const r = await call(withQuery("/v1/generate", chaosQuery(chaos)), {
+  const r = await call(withQuery(path, chaosQuery(chaos)), {
     method: "POST",
     headers: { "content-type": "application/json", ...tool("generate_test_data") },
     body: JSON.stringify(request),
@@ -228,7 +239,8 @@ export async function generate(args) {
     `generated fake data, see ${BASE_URL}/terms)\n` +
     (target === undefined ? `Output sha256 ${sha256}\n` : "") +
     schemaLine(r.headers) +
-    (chaos?.empty_result ? "Reproduce: not available, because empty_result was requested." : reproduceCurl(request, r.headers));
+    (r.headers.get("x-dataset-rows-sha256") ? `Rows sha256 per table: ${r.headers.get("x-dataset-rows-sha256")}\n` : "") +
+    (chaos?.empty_result ? "Reproduce: not available, because empty_result was requested." : reproduceCurl(request, r.headers, path));
   if (target === undefined) return { content: [{ type: "text", text: r.text }, { type: "text", text: provenance }] };
 
   try {
@@ -239,10 +251,11 @@ export async function generate(args) {
     return fail(`Could not write ${target}: ${e instanceof Error ? e.message : String(e)}`);
   }
   const bytes = Buffer.byteLength(r.text, "utf8");
+  const rows = dataset ? request.tables.reduce((a, t) => a + (t?.rows ?? 10), 0) : request.rows ?? 100;
   const summary = [
-    `Wrote ${request.rows ?? 100} rows (${bytes} bytes) to ${target}`,
+    `Wrote ${rows} rows (${bytes} bytes) to ${target}`,
     `sha256 ${sha256}`,
-    headerLine(r.text, request.format ?? "csv"),
+    dataset ? `tables: ${request.tables.map((t) => t?.name).join(", ")}` : headerLine(r.text, request.format ?? "csv"),
     provenance,
   ].join("\n");
   return { content: [{ type: "text", text: summary }] };
@@ -253,10 +266,12 @@ export async function generate(args) {
  * generator version pinned (a version the service no longer serves is refused with 409, never answered with
  * different bytes). Chaos options are left out. Single quotes in values are escaped for a POSIX shell.
  */
-export function reproduceCurl(request, headers) {
+export function reproduceCurl(request, headers, path = "/v1/generate") {
   const body = { ...request, seed: Number(headers.get("x-seed")), version: headers.get("x-generator-version") };
+  // A dataset answer also pins its dataset version.
+  if (headers.get("x-dataset-version")) body.dataset_version = headers.get("x-dataset-version");
   const json = JSON.stringify(body).replace(/'/g, "'\\''");
-  return `Reproduce: curl -s ${BASE_URL}/v1/generate -H 'content-type: application/json' -d '${json}'`;
+  return `Reproduce: curl -s ${BASE_URL}${path} -H 'content-type: application/json' -d '${json}'`;
 }
 
 export async function listTypes() {
@@ -393,9 +408,10 @@ export function createServer({ sandbox = false, sandboxCheckFailed = false } = {
     {
       title: "Generate test data",
       description:
-        "Generate realistic fake test data (CSV, JSON or SQL INSERTs) from a table schema. Use it first, when you need " +
+        "Generate fake test data (CSV, JSON or SQL INSERTs) from a table schema. Use it first, when you need " +
         "rows for fixtures, seed data or tests (list_column_types gives each type's options). Or pass schema (JSON Schema, e.g. a " +
-        "Pydantic or Zod export, or an OpenAPI component) instead of columns; unmappable fields are named. Next: invalid_values for " +
+        "Pydantic or Zod export, or an OpenAPI component) instead of columns; unmappable fields are named. For related tables with " +
+        "matching keys, pass tables (one call, SQL or JSON). Next: invalid_values for " +
         `values your code should reject${sandbox ? ", then sandbox_create and sandbox_payments to test a payment flow" : ""}. ` +
         "Free and rate-limited: up to " +
         "500 rows and 50 columns per call. No real person's data is used as input and no record is derived from a real " +

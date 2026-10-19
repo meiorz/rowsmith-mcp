@@ -1,0 +1,70 @@
+{
+  "note": "Answers of the Worker to the documented dataset example (README, llms.txt), for offline plugin tests; test/dataset.test.ts checks them against the handler.",
+  "request": {
+    "seed": 42,
+    "format": "sql",
+    "tables": [
+      {
+        "name": "customers",
+        "rows": 3,
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid"
+          },
+          {
+            "name": "email",
+            "type": "email"
+          }
+        ]
+      },
+      {
+        "name": "orders",
+        "rows": 5,
+        "columns": [
+          {
+            "name": "id",
+            "type": "sequence"
+          },
+          {
+            "name": "customer_id",
+            "type": "ref",
+            "table": "customers",
+            "column": "id"
+          },
+          {
+            "name": "total",
+            "type": "decimal",
+            "min": 5,
+            "max": 500
+          }
+        ]
+      }
+    ]
+  },
+  "sql": {
+    "body": "CREATE TABLE \"customers\" (\n  \"id\" TEXT NOT NULL,\n  \"email\" TEXT NOT NULL,\n  PRIMARY KEY (\"id\")\n);\nINSERT INTO \"customers\" (\"id\", \"email\") VALUES ('6286d8b0-1447-4084-87ce-3a422577b51e', 'amara.lee902@mail.test');\nINSERT INTO \"customers\" (\"id\", \"email\") VALUES ('eba6e7fa-362a-45ef-83a9-6cf5996bbd08', 'wei.ueda305@example.com');\nINSERT INTO \"customers\" (\"id\", \"email\") VALUES ('0ead45a1-d673-4dad-825f-d570174b80b0', 'alex.ito355@mail.test');\n\nCREATE TABLE \"orders\" (\n  \"id\" BIGINT NOT NULL,\n  \"customer_id\" TEXT NOT NULL,\n  \"total\" NUMERIC NOT NULL,\n  PRIMARY KEY (\"id\"),\n  FOREIGN KEY (\"customer_id\") REFERENCES \"customers\" (\"id\")\n);\nINSERT INTO \"orders\" (\"id\", \"customer_id\", \"total\") VALUES (1, '0ead45a1-d673-4dad-825f-d570174b80b0', 449.48);\nINSERT INTO \"orders\" (\"id\", \"customer_id\", \"total\") VALUES (2, '6286d8b0-1447-4084-87ce-3a422577b51e', 327.82);\nINSERT INTO \"orders\" (\"id\", \"customer_id\", \"total\") VALUES (3, '6286d8b0-1447-4084-87ce-3a422577b51e', 155.63);\nINSERT INTO \"orders\" (\"id\", \"customer_id\", \"total\") VALUES (4, 'eba6e7fa-362a-45ef-83a9-6cf5996bbd08', 282.23);\nINSERT INTO \"orders\" (\"id\", \"customer_id\", \"total\") VALUES (5, '0ead45a1-d673-4dad-825f-d570174b80b0', 373.95);\n",
+    "headers": {
+      "content-type": "application/sql",
+      "x-generator-version": "1",
+      "x-seed": "42",
+      "x-reproduce": "POST /v1/dataset body-b64url=eyJzZWVkIjo0MiwiZm9ybWF0Ijoic3FsIiwidGFibGVzIjpbeyJuYW1lIjoiY3VzdG9tZXJzIiwicm93cyI6MywiY29sdW1ucyI6W3sibmFtZSI6ImlkIiwidHlwZSI6InV1aWQifSx7Im5hbWUiOiJlbWFpbCIsInR5cGUiOiJlbWFpbCJ9XX0seyJuYW1lIjoib3JkZXJzIiwicm93cyI6NSwiY29sdW1ucyI6W3sibmFtZSI6ImlkIiwidHlwZSI6InNlcXVlbmNlIn0seyJuYW1lIjoiY3VzdG9tZXJfaWQiLCJ0eXBlIjoicmVmIiwidGFibGUiOiJjdXN0b21lcnMiLCJjb2x1bW4iOiJpZCJ9LHsibmFtZSI6InRvdGFsIiwidHlwZSI6ImRlY2ltYWwiLCJtaW4iOjUsIm1heCI6NTAwfV19XSwidmVyc2lvbiI6IjEiLCJkYXRhc2V0X3ZlcnNpb24iOiIxIn0",
+      "x-request-sha256": "c7e321bb73d217391ab8044d86215b6152101c0dc0ced678d58205904c81f66d",
+      "x-output-sha256": "8bf332418713544a8d1d3b2b7ce04c5f570d07243849f1120bb3aa7b2a9c83b8",
+      "x-dataset-version": "1",
+      "x-dataset-rows-sha256": "customers=11241f78c00aefa204b4821a6eba15c875dd6117656a12e2b9aa01ed0c047055,orders=5806d035ecd23b0af54b8efc104ccb56b86b8b016d2c214053f0f8c2fce4eb26"
+    }
+  },
+  "json": {
+    "body": "{\"tables\":{\"customers\":[{\"id\":\"6286d8b0-1447-4084-87ce-3a422577b51e\",\"email\":\"amara.lee902@mail.test\"},{\"id\":\"eba6e7fa-362a-45ef-83a9-6cf5996bbd08\",\"email\":\"wei.ueda305@example.com\"},{\"id\":\"0ead45a1-d673-4dad-825f-d570174b80b0\",\"email\":\"alex.ito355@mail.test\"}],\"orders\":[{\"id\":1,\"customer_id\":\"0ead45a1-d673-4dad-825f-d570174b80b0\",\"total\":449.48},{\"id\":2,\"customer_id\":\"6286d8b0-1447-4084-87ce-3a422577b51e\",\"total\":327.82},{\"id\":3,\"customer_id\":\"6286d8b0-1447-4084-87ce-3a422577b51e\",\"total\":155.63},{\"id\":4,\"customer_id\":\"eba6e7fa-362a-45ef-83a9-6cf5996bbd08\",\"total\":282.23},{\"id\":5,\"customer_id\":\"0ead45a1-d673-4dad-825f-d570174b80b0\",\"total\":373.95}]}}",
+    "headers": {
+      "content-type": "application/json",
+      "x-generator-version": "1",
+      "x-seed": "42",
+      "x-request-sha256": "c125d70590ca98fecba7f599cbb86bd258017c26b4957b941f0d31d7a485f255",
+      "x-output-sha256": "02d03195b46e30b3dccd940065add0fdadaf74cfc01f375185aae56ecc4b5e79",
+      "x-dataset-version": "1",
+      "x-dataset-rows-sha256": "customers=11241f78c00aefa204b4821a6eba15c875dd6117656a12e2b9aa01ed0c047055,orders=5806d035ecd23b0af54b8efc104ccb56b86b8b016d2c214053f0f8c2fce4eb26"
+    }
+  }
+}

@@ -22,9 +22,9 @@ of use (https://testdata-api.re-jam620.workers.dev/terms) and count against your
 ```sh
 pip install pytest-rowsmith
 ```
-Or from the public repository at the plugin's release tag pytest-rowsmith-v0.1.0:
+Or from the public repository at the plugin's release tag pytest-rowsmith-v0.2.0:
 ```sh
-pip install "git+https://github.com/meiorz/rowsmith-mcp@pytest-rowsmith-v0.1.0#subdirectory=pytest-rowsmith"
+pip install "git+https://github.com/meiorz/rowsmith-mcp@pytest-rowsmith-v0.2.0#subdirectory=pytest-rowsmith"
 ```
 The install from the repository needs git and network access to PyPI for the build tool (setuptools); nothing is
 compiled. pytest loads the plugin automatically. Python 3.9 or later.
@@ -111,6 +111,37 @@ def test_orders_are_golden(rowsmith):
   must match too) and fails with both hashes, the versions, whether the answer came from the cache, and the
   reproduce line. Both are also importable from `pytest_rowsmith`.
 - The plugin pins the version in every request. A pinned version is served as long as the service runs; a retired version answers 409. A version's output is not changed in place: a golden test checks its bytes on every build.
+
+## Related tables (dataset and SQLite)
+`rowsmith.dataset(tables, seed=1, format="json")` asks `POST /v1/dataset` for several tables of fake test data in
+one call. A column `{"name": "customer_id", "type": "ref", "table": "customers", "column": "id"}` takes its values
+from the primary key generated for an earlier table in the same call, so every child key exists in its parent. It
+returns `{table name: [row dicts]}` in table order (`format="sql"` returns the SQL text). `rowsmith.sqlite(tables)`
+asks for the SQL and builds a new `.sqlite` file from it with the standard library's `sqlite3`, in pytest's tmp
+path, with foreign keys enforced and checked, and returns its path. The service sends text only; the file is built
+on your machine.
+```python
+import sqlite3
+
+SHOP = [
+    {"name": "customers", "rows": 3, "columns": [{"name": "id", "type": "uuid"}, {"name": "email", "type": "email"}]},
+    {"name": "orders", "rows": 5, "columns": [{"name": "id", "type": "sequence"},
+                                              {"name": "customer_id", "type": "ref", "table": "customers", "column": "id"},
+                                              {"name": "total", "type": "decimal", "min": 5, "max": 500}]},
+]
+
+def test_orders_join_customers(rowsmith):
+    db = sqlite3.connect(str(rowsmith.sqlite(SHOP, seed=42)))
+    assert db.execute("SELECT COUNT(*) FROM orders JOIN customers ON customers.id = orders.customer_id").fetchone()[0] == 5
+```
+- Refs resolve only inside the request: tables come in dependency order, and a ref to a later or unknown table, or
+  to a column that is not the primary key, is refused with the service's `next` step in the `RowsmithError`.
+- The SQL text is cached like any answer (in `.pytest_cache`, keyed by the request's sha256), so later runs work
+  offline; each `sqlite()` call builds a fresh file, so a test may change it freely. Pass `path=` to choose the
+  file (an existing file is refused).
+- `rowsmith.fetch_dataset(...)` returns the full answer; its `rows_sha256` is `{table: sha256}` from
+  `X-Dataset-Rows-SHA256`, the same for the SQL and the JSON form of one request, and `manifest_entry` and
+  `assert_golden` work on it as on `fetch`.
 
 ## Caching and offline runs
 Answers are stored in pytest's own cache (`.pytest_cache/v/rowsmith/v1/` in your project), one entry per request,

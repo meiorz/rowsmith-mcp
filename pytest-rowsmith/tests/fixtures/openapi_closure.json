@@ -3,7 +3,7 @@
   "input": {
     "openapi": {
       "openapi": "3.0.3",
-      "info": { "title": "Shop", "version": "1", "contact": { "email": "owner.realperson@gmail.com" } },
+      "info": { "title": "Shop", "version": "1", "contact": { "email": "owner.realperson@mail.example" } },
       "servers": [{ "url": "https://internal.shop.example/api" }],
       "security": [{ "bearer": [] }],
       "paths": {

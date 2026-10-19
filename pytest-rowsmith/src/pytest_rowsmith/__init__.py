@@ -10,14 +10,18 @@ import csv
 import hashlib
 import io
 import json
+import os
+import pathlib
 import socket
+import sqlite3
+import tempfile
 import time
 import urllib.error
 import urllib.request
 from http.client import HTTPException
 
 # The one place the version is set. pyproject.toml reads it from here, and the User-Agent carries it.
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 DEFAULT_URL = "https://testdata-api.re-jam620.workers.dev"
 USER_AGENT = "pytest-rowsmith/" + __version__
@@ -26,16 +30,21 @@ TIMEOUT_S = 30.0
 FORMATS = ("csv", "json", "sql")
 # Response headers kept in the cache beside the body bytes.
 KEPT_HEADERS = ("content-type", "x-generator-version", "x-seed", "x-reproduce", "x-schema-version", "x-schema-unmapped",
-                "x-request-sha256", "x-output-sha256")
+                "x-request-sha256", "x-output-sha256", "x-dataset-version", "x-dataset-rows-sha256")
 # Schema keys whose values are examples or defaults: removed before a schema is sent (the service ignores them too).
 # Keys directly inside these maps are property or schema names, and are kept.
 EXAMPLE_KEYS = frozenset(("example", "examples", "default", "const"))
 NAME_MAPS = frozenset(("properties", "patternProperties", "$defs", "definitions", "schemas", "dependentSchemas"))
 CACHE_PREFIX = "rowsmith/v1/"
+DATASET_CACHE_PREFIX = "rowsmith/dataset/v1/"
+GENERATE_PATH = "/v1/generate"
+DATASET_PATH = "/v1/dataset"
+DATASET_FORMATS = ("sql", "json")
 
 MANIFEST_VERSION = 1
 
-__all__ = ["__version__", "Rowsmith", "RowsmithError", "RowsmithResult", "request_body", "assert_golden", "manifest_entry",
+__all__ = ["__version__", "Rowsmith", "RowsmithError", "RowsmithResult", "request_body", "dataset_body", "build_sqlite",
+           "assert_golden", "manifest_entry",
            "DEFAULT_URL", "USER_AGENT", "MANIFEST_VERSION"]
 
 
@@ -68,12 +77,13 @@ class RowsmithError(Exception):
 class RowsmithResult:
     """The bytes and kept headers of one generate answer, from the network or from the cache."""
 
-    def __init__(self, body, headers, request_body, from_cache, fmt):
+    def __init__(self, body, headers, request_body, from_cache, fmt, path=GENERATE_PATH):
         self.body = body  # bytes, exactly as the service sent them
         self.headers = dict(headers)  # lower-case names; only KEPT_HEADERS
         self.request_body = request_body  # the exact bytes sent (and hashed for the cache key)
         self.from_cache = from_cache
         self.format = fmt
+        self.path = path  # /v1/generate or /v1/dataset
 
     @property
     def text(self):
@@ -98,7 +108,7 @@ class RowsmithResult:
         if value:
             return value
         line = self.headers.get("x-reproduce") or ""
-        if line.startswith("POST /v1/generate body-b64url="):
+        if line.startswith("POST %s body-b64url=" % self.path):
             b64 = line.split("=", 1)[1]
             return hashlib.sha256(base64.urlsafe_b64decode(b64 + "=" * (-len(b64) % 4))).hexdigest()
         return None
@@ -128,7 +138,19 @@ class RowsmithResult:
     def reproduce(self):
         """The service's X-Reproduce line (CSV and SQL answers carry one; JSON answers do not, so for JSON
         this is the request that was sent, in the same form)."""
-        return self.headers.get("x-reproduce") or _request_line(self.request_body)
+        return self.headers.get("x-reproduce") or _request_line(self.request_body, self.path)
+
+    @property
+    def dataset_version(self):
+        """X-Dataset-Version for a dataset answer; None otherwise."""
+        return self.headers.get("x-dataset-version")
+
+    @property
+    def rows_sha256(self):
+        """For a dataset answer: {table: sha256} from X-Dataset-Rows-SHA256, the sha256 of each table's rows as JSON
+        arrays of values in column order; the same for the sql and the json form of one request. {} otherwise."""
+        value = self.headers.get("x-dataset-rows-sha256") or ""
+        return dict(p.split("=", 1) for p in value.split(",") if "=" in p)
 
     def parsed(self):
         """List of dicts for csv and json; the text itself for sql. CSV values are strings."""
@@ -142,8 +164,9 @@ class RowsmithResult:
 def _self_contained(result):
     """A reproduce line that regenerates the bytes by itself: X-Reproduce when it carries the body, otherwise the
     request this client sent (version pinned too, so it regenerates the same bytes or is refused with 409)."""
+    path = getattr(result, "path", GENERATE_PATH)
     line = result.headers.get("x-reproduce") or ""
-    return line if line.startswith("POST /v1/generate body-b64url=") else _request_line(result.request_body)
+    return line if line.startswith("POST %s body-b64url=" % path) else _request_line(result.request_body, path)
 
 
 def manifest_entry(result, name):
@@ -305,9 +328,55 @@ def request_body(columns=None, rows=10, seed=1, format="json", table=None, versi
     return json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
-def _request_line(body):
+def dataset_body(tables, seed=1, format="sql", version="1", dataset_version="1"):
+    """The exact JSON bytes sent to POST /v1/dataset (related tables in one call). Key order is fixed, so the bytes
+    (and the cache key, their sha256) depend only on the arguments. ``tables`` is a list of dicts, each
+    ``{"name", "rows", "columns"}`` or ``{"name", "rows", "schema"}``; a column ``{"name": "customer_id",
+    "type": "ref", "table": "customers", "column": "id"}`` takes its values from an earlier table's primary key.
+    A table's schema is sent without its example and default values, like ``request_body``."""
+    if not isinstance(tables, (list, tuple)) or not tables:
+        raise TypeError("tables must be a non-empty list of table dicts")
+    if any(not isinstance(t, dict) for t in tables):
+        raise TypeError("each table must be a dict with name, rows, and columns or schema")
+    if format not in DATASET_FORMATS:
+        raise ValueError("format must be one of %s, not %r" % (", ".join(DATASET_FORMATS), format))
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise TypeError("seed must be an int")
+    for name, v in (("version", version), ("dataset_version", dataset_version)):
+        if not isinstance(v, str) or not v:
+            raise TypeError("%s must be a non-empty string, e.g. '1'" % name)
+    sent = []
+    for t in tables:
+        t = dict(t)
+        if "schema" in t:
+            t["schema"] = minimal_openapi(strip_examples(t["schema"]))
+        sent.append(t)
+    body = {"seed": seed, "format": format, "version": version, "dataset_version": dataset_version, "tables": sent}
+    return json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _request_line(body, path=GENERATE_PATH):
     b64 = base64.urlsafe_b64encode(body).decode("ascii").rstrip("=")
-    return "POST /v1/generate body-b64url=" + b64
+    return "POST %s body-b64url=%s" % (path, b64)
+
+
+def build_sqlite(sql_text, target):
+    """Runs a /v1/dataset SQL dump into a new SQLite file at ``target`` with the standard library's sqlite3, with
+    foreign keys enforced, and checks them (PRAGMA foreign_key_check). Refuses an existing file. Returns the path."""
+    target = pathlib.Path(target)
+    if target.exists():
+        raise FileExistsError("%s already exists; pass another path" % target)
+    con = sqlite3.connect(str(target))
+    try:
+        con.execute("PRAGMA foreign_keys = ON")
+        con.executescript(sql_text)
+        bad = con.execute("PRAGMA foreign_key_check").fetchall()
+        con.commit()
+    finally:
+        con.close()
+    if bad:
+        raise AssertionError("the dataset's foreign keys do not hold in SQLite: %r" % bad[:5])
+    return target
 
 
 class Rowsmith:
@@ -317,7 +386,8 @@ class Rowsmith:
     pytest's ``config.cache``; None keeps answers in memory for the life of the client only.
     """
 
-    def __init__(self, base_url=DEFAULT_URL, cache=None, refresh=False, timeout=TIMEOUT_S, retry_delay=1.0):
+    def __init__(self, base_url=DEFAULT_URL, cache=None, refresh=False, timeout=TIMEOUT_S, retry_delay=1.0, tmp_dir=None):
+        self.tmp_dir = tmp_dir  # callable returning a new directory for sqlite(); the fixture passes pytest's tmp path
         self.base_url = base_url.rstrip("/")
         self.cache = cache
         self.refresh = refresh
@@ -337,14 +407,38 @@ class Rowsmith:
     def fetch(self, columns=None, rows=10, seed=1, format="json", table=None, version="1", schema=None):
         """The full answer (bytes, headers, reproduce line) as a RowsmithResult. Pass columns or schema."""
         body = request_body(columns, rows=rows, seed=seed, format=format, table=table, version=version, schema=schema)
-        key = CACHE_PREFIX + hashlib.sha256(body).hexdigest()
+        return self._fetch(body, format, CACHE_PREFIX, GENERATE_PATH)
+
+    def fetch_dataset(self, tables, seed=1, format="json", version="1", dataset_version="1"):
+        """Related tables in one call (POST /v1/dataset) as a RowsmithResult, cached like ``fetch``."""
+        body = dataset_body(tables, seed=seed, format=format, version=version, dataset_version=dataset_version)
+        return self._fetch(body, format, DATASET_CACHE_PREFIX, DATASET_PATH)
+
+    def dataset(self, tables, seed=1, format="json", version="1", dataset_version="1"):
+        """Related tables whose foreign keys agree: for json, a dict {table name: list of row dicts}, in table order;
+        for sql, the SQL text."""
+        result = self.fetch_dataset(tables, seed=seed, format=format, version=version, dataset_version=dataset_version)
+        return result.parsed()["tables"] if format == "json" else result.text
+
+    def sqlite(self, tables, seed=1, version="1", dataset_version="1", path=None):
+        """Builds a new SQLite file from the dataset's SQL (stdlib sqlite3, foreign keys enforced and checked) and
+        returns its path: ``path`` when given, otherwise a new file in pytest's tmp path (from the fixture) or in a
+        new temporary directory. The SQL text is cached like any answer; the file is built fresh on every call."""
+        result = self.fetch_dataset(tables, seed=seed, format="sql", version=version, dataset_version=dataset_version)
+        if path is None:
+            folder = self.tmp_dir() if self.tmp_dir is not None else tempfile.mkdtemp(prefix="rowsmith-")
+            path = os.path.join(str(folder), "rowsmith-%s.sqlite" % hashlib.sha256(result.request_body).hexdigest()[:16])
+        return build_sqlite(result.text, path)
+
+    def _fetch(self, body, format, prefix, path):
+        key = prefix + hashlib.sha256(body).hexdigest()
         if key in self._memory:
             return self._memory[key]
-        result = None if self.refresh else self._from_cache(key, body, format)
+        result = None if self.refresh else self._from_cache(key, body, format, path)
         if result is None:
-            status, headers, data = self._post(body)
+            status, headers, data = self._post(body, path)
             kept = {h: headers[h] for h in KEPT_HEADERS if h in headers}
-            result = RowsmithResult(data, kept, body, False, format)
+            result = RowsmithResult(data, kept, body, False, format, path)
             if self.cache is not None:
                 self.cache.set(key, {
                     "body_b64": base64.b64encode(data).decode("ascii"),
@@ -354,7 +448,7 @@ class Rowsmith:
         self._memory[key] = result
         return result
 
-    def _from_cache(self, key, body, fmt):
+    def _from_cache(self, key, body, fmt, path=GENERATE_PATH):
         if self.cache is None:
             return None
         entry = self.cache.get(key, None)
@@ -367,10 +461,10 @@ class Rowsmith:
             return None
         if hashlib.sha256(data).hexdigest() != entry.get("body_sha256"):
             return None
-        return RowsmithResult(data, headers, body, True, fmt)
+        return RowsmithResult(data, headers, body, True, fmt, path)
 
-    def _post(self, body):
-        url = self.base_url + "/v1/generate"
+    def _post(self, body, path=GENERATE_PATH):
+        url = self.base_url + path
         attempts = 2  # no retry on 4xx; exactly one retry on a 5xx or a network error
         for attempt in range(attempts):
             last = attempt == attempts - 1
@@ -394,17 +488,17 @@ class Rowsmith:
                 if e.code >= 500 and not last:
                     time.sleep(self.retry_delay)
                     continue
-                raise self._http_error(e.code, headers, raw, body, url) from None
+                raise self._http_error(e.code, headers, raw, body, url, path) from None
             except (urllib.error.URLError, socket.timeout, OSError, HTTPException) as e:
                 if not last:
                     time.sleep(self.retry_delay)
                     continue
                 reason = getattr(e, "reason", None) or e
-                raise RowsmithError(None, "%s: %s" % (type(e).__name__, reason), None, _request_line(body), url) from None
+                raise RowsmithError(None, "%s: %s" % (type(e).__name__, reason), None, _request_line(body, path), url) from None
         raise AssertionError("unreachable")
 
     @staticmethod
-    def _http_error(status, headers, raw, body, url):
+    def _http_error(status, headers, raw, body, url, path=GENERATE_PATH):
         error = nxt = None
         try:
             doc = json.loads(raw.decode("utf-8"))
@@ -416,5 +510,5 @@ class Rowsmith:
             error = text[:300] if text else None
         if status == 429 and headers.get("retry-after"):
             nxt = (nxt + " " if nxt else "") + "(Retry-After: %s s)" % headers["retry-after"]
-        reproduce = headers.get("x-reproduce") or _request_line(body)
+        reproduce = headers.get("x-reproduce") or _request_line(body, path)
         return RowsmithError(status, error, nxt, reproduce, url)

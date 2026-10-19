@@ -229,10 +229,10 @@ test("a schema is sent without example, examples, default, const or x-* keys; pr
   const seen = fake(200, "id\r\n1\r\n", { ...OK_HEADERS, "x-schema-version": "1", "x-schema-unmapped": "tags,address.zip" });
   const schema = {
     type: "object",
-    examples: [{ email: "jane.realperson@gmail.com" }],
+    examples: [{ email: "jane.realperson@mail.example" }],
     "x-internal": "Janet Realperson",
     properties: {
-      email: { type: "string", format: "email", example: "jane.realperson@gmail.com", default: "jane@gmail.com" },
+      email: { type: "string", format: "email", example: "jane.realperson@mail.example", default: "jane@mail.example" },
       default: { type: "string", const: "fixed" },
       example: { $ref: "#/$defs/Example" },
       "x-trace": { type: "string", "x-faker": "name.fullName" },
@@ -302,7 +302,7 @@ test("server.json and the package description describe only what is live with th
   for (const f of ["../server.json", "../package.json"]) {
     const text = await readFile(new URL(f, import.meta.url), "utf8");
     assert.doesNotMatch(text, /sandbox|payment|charge|refund/i, f);
-    assert.match(text, /"version": "0\.4\.\d+"/, f);
+    assert.match(text, /"version": "0\.5\.\d+"/, f);
   }
   // The registry entry names a published npm version; server.json follows package.json.
   const server = JSON.parse(await readFile(new URL("../server.json", import.meta.url), "utf8"));
@@ -310,6 +310,8 @@ test("server.json and the package description describe only what is live with th
   assert.equal(server.version, pkg.version);
   assert.equal(server.packages[0].version, pkg.version);
   assert.equal(server.repository?.url, "https://github.com/meiorz/rowsmith-mcp");
+  // A start script lets directories (Glama) start the server from a checkout.
+  assert.equal(pkg.scripts.start, "node index.js");
 });
 
 test("server.js states the package version as a constant (read here as text; server.js reads no file for it)", async () => {
@@ -383,4 +385,61 @@ test("the package test run covers test/*.test.js only, so no example (which call
   const examples = (await readdir(new URL("../examples/", import.meta.url), { recursive: true })).map((f) => "examples/" + String(f).split("\\").join("/"));
   assert.ok(examples.some((f) => f.endsWith(".test.mjs")), "the live example still exists, run by hand");
   for (const f of examples) assert.ok(!f.startsWith("test/"), f + " would be matched by the test script");
+});
+
+test("tables calls /v1/dataset with the arguments as sent (schemas cleaned), and the result carries the per-table row hashes", async () => {
+  const headers = { ...OK_HEADERS, "x-dataset-version": "1", "x-dataset-rows-sha256": `a=${"1".repeat(64)},b=${"2".repeat(64)}`, "x-output-sha256": "e".repeat(64) };
+  const seen = fake(200, 'CREATE TABLE "a" (\n  "id" TEXT NOT NULL,\n  PRIMARY KEY ("id")\n);\n', headers);
+  const tables = [
+    { name: "a", rows: 2, columns: [{ name: "id", type: "uuid" }] },
+    { name: "b", rows: 3, schema: { type: "object", properties: { n: { type: "string", examples: ["planted"] } } } },
+  ];
+  const out = await generate({ seed: 7, format: "sql", tables, chaos: { attempt: 2 } });
+  assert.equal(seen[0].url, `${BASE_URL}/v1/dataset?attempt=2`);
+  assert.equal(seen[0].init.headers["x-rowsmith-tool"], "generate_test_data");
+  const sent = JSON.parse(seen[0].init.body);
+  assert.deepEqual(sent, { seed: 7, format: "sql", tables: [tables[0], { name: "b", rows: 3, schema: { type: "object", properties: { n: { type: "string" } } } }] });
+  assert.ok(!seen[0].init.body.includes("planted"));
+  const text = out.content[1].text;
+  assert.match(text, new RegExp(`^Rows sha256 per table: a=${"1".repeat(64)},b=${"2".repeat(64)}$`, "m"));
+  const curl = text.split("\n").at(-1);
+  assert.ok(curl.startsWith(`Reproduce: curl -s ${BASE_URL}/v1/dataset `), curl);
+  const body = JSON.parse(curl.slice(curl.indexOf("-d '") + 4, -1));
+  assert.equal(body.version, "1");
+  assert.equal(body.dataset_version, "1");
+  assert.equal(body.tables.length, 2);
+});
+
+test("tables with output_path writes the dump and names the tables and their total rows", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rowsmith-mcp-"));
+  process.env.ROWSMITH_OUT_DIR = dir;
+  try {
+    fake(200, '{"tables":{"a":[],"b":[]}}', { ...OK_HEADERS, "x-dataset-version": "1" });
+    const out = await generate({ format: "json", tables: [{ name: "a", rows: 4, columns: [] }, { name: "b", columns: [] }], output_path: join(dir, "d.json") });
+    assert.equal(out.isError, undefined);
+    assert.match(out.content[0].text, /^Wrote 14 rows \(\d+ bytes\) to /);
+    assert.match(out.content[0].text, /^tables: a, b$/m);
+    assert.equal(await readFile(join(dir, "d.json"), "utf8"), '{"tables":{"a":[],"b":[]}}');
+  } finally {
+    delete process.env.ROWSMITH_OUT_DIR;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the tables argument passes through the MCP client (schema accepts it; at most 10 tables)", async () => {
+  const seen = fake(200, "x", { ...OK_HEADERS, "x-dataset-version": "1" });
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const server = createServer();
+  await server.connect(serverSide);
+  const client = new Client({ name: "test", version: "0" });
+  await client.connect(clientSide);
+  const tables = [{ name: "a", rows: 1, columns: [{ name: "id", type: "uuid" }] }, { name: "b", rows: 1, columns: [{ name: "a_id", type: "ref", table: "a", column: "id" }] }];
+  const out = await client.callTool({ name: "generate_test_data", arguments: { seed: 1, tables } });
+  const tooMany = await client.callTool({ name: "generate_test_data", arguments: { tables: Array.from({ length: 11 }, (_, i) => ({ name: `t${i}` })) } });
+  await client.close();
+  await server.close();
+  assert.equal(out.isError, undefined);
+  assert.deepEqual(JSON.parse(seen[0].init.body), { seed: 1, tables });
+  assert.equal(seen.length, 1);
+  assert.equal(tooMany.isError, true);
 });

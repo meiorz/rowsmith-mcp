@@ -75,6 +75,15 @@ jobs:
         run: PYTHONPATH=src python -m pytest -q -p no:cacheprovider -W error
       - name: Build the sdist and wheel with the pinned backend
         run: python -m build --no-isolation
+      - name: Check that the sdist carries the offline tests with conftest.py and the fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          listing="$(tar -tzf dist/*.tar.gz)"
+          echo "$listing"
+          for f in tests/conftest.py tests/fixtures/dataset_example.json tests/fixtures/openapi_closure.json; do
+            grep -q "/$f\$" <<< "$listing" || { echo "::error::sdist lacks $f"; exit 1; }
+          done
       - name: Write the sha256 of each artifact and the tool versions to the job summary
         shell: bash
         run: |

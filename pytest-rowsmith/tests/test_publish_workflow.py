@@ -108,3 +108,17 @@ def test_sha256_of_the_artifacts_and_tool_versions_go_to_the_job_summary():
     text = "\n".join(build)
     assert "sha256sum" in text and "$GITHUB_STEP_SUMMARY" in text
     assert '("setuptools", "build", "pytest")' in text
+
+
+def test_build_checks_that_the_sdist_carries_conftest_and_the_fixtures():
+    build = _block(_block(_lines(), "jobs:", 0), "build:", 2)
+    text = "\n".join(build)
+    assert text.index("python -m build --no-isolation") < text.index("tar -tzf dist/*.tar.gz") < text.index("sha256sum")
+    for f in ("tests/conftest.py", "tests/fixtures/dataset_example.json", "tests/fixtures/openapi_closure.json"):
+        assert f in text
+
+
+def test_manifest_includes_conftest_and_the_fixtures():
+    manifest = (pathlib.Path(__file__).resolve().parents[1] / "MANIFEST.in").read_text(encoding="utf-8").splitlines()
+    assert "include tests/conftest.py" in manifest
+    assert "recursive-include tests/fixtures *.json" in manifest

@@ -27,10 +27,12 @@ def base_url(config):
 
 
 @pytest.fixture(scope="session")
-def rowsmith(pytestconfig):
-    """A Rowsmith client whose answers are cached in pytest's cache (.pytest_cache), keyed by the request."""
+def rowsmith(pytestconfig, tmp_path_factory):
+    """A Rowsmith client whose answers are cached in pytest's cache (.pytest_cache), keyed by the request.
+    ``rowsmith.sqlite(...)`` builds its files in pytest's tmp path."""
     return Rowsmith(
         base_url=base_url(pytestconfig),
         cache=getattr(pytestconfig, "cache", None),
         refresh=pytestconfig.getoption("rowsmith_refresh"),
+        tmp_dir=lambda: tmp_path_factory.mktemp("rowsmith"),
     )

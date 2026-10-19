@@ -1,6 +1,6 @@
 # rowsmith-mcp
 
-An MCP server for **Rowsmith**: realistic fake test data (CSV, JSON or SQL INSERTs) generated from a table schema.
+An MCP server for **Rowsmith**: fake test data (CSV, JSON or SQL INSERTs) generated from a table schema.
 It is a thin client of the public Rowsmith API, free and rate-limited.
 
 ## Quickstart (60 seconds)
@@ -36,7 +36,7 @@ It is a thin client of the public Rowsmith API, free and rate-limited.
 ## Tools
 | Tool | What it does |
 |---|---|
-| `generate_test_data` | `columns` (1-50) or `schema` (a JSON Schema object, or `{openapi, component}`), optional `rows` (1-500), `seed`, `format` (`csv`, `json`, `sql`), `table`, `output_path`, `overwrite`, `chaos` |
+| `generate_test_data` | `columns` (1-50) or `schema` (a JSON Schema object, or `{openapi, component}`), optional `rows` (1-500), `seed`, `format` (`csv`, `json`, `sql`), `table`, `output_path`, `overwrite`, `chaos`; or `tables` instead, for related tables in one call (see below) |
 | `list_column_types` | the supported column types and their options |
 | `invalid_values` | invalid-on-purpose TEST DATA values with the reason each is invalid: `kind` (`email`, `card`, `address`, `unicode`, `iban`, `ssn`, `all`), `count`, `seed`, `fields`, `chaos` |
 | `sandbox_create` (listed only when the service advertises the sandbox) | create a payment sandbox (TEST DATA; deleted 1 hour after creation): optional `seed` |
@@ -45,8 +45,8 @@ It is a thin client of the public Rowsmith API, free and rate-limited.
 At startup the server reads `/pricing.json` once (30 s timeout, cached for the process) and lists the
 two sandbox tools only if the service advertises `/v1/sandbox` there. If that request fails, the sandbox tools stay
 hidden and the server's instructions and `list_column_types` output say why; restart to check again. Tool-definition size, measured as characters of
-the `tools/list` JSON (names, titles, descriptions and input schemas) divided by 4: 3 tools, about 1241 tokens
-(4962 characters); 5 tools, about 1849 tokens (7395 characters). Measure with `node scripts/tool-tokens.js`.
+the `tools/list` JSON (names, titles, descriptions and input schemas) divided by 4: 3 tools, about 1370 tokens
+(5477 characters); 5 tools, about 1978 tokens (7910 characters). Measure with `node scripts/tool-tokens.js`.
 
 For more than about 50 rows, pass `output_path`: the server writes the file and returns a summary (rows, bytes,
 sha256, the header line) instead of putting the data in the model's context. Files can only be written inside the
@@ -106,6 +106,16 @@ Example call:
   "columns": [ { "name": "order_id", "type": "sequence", "prefix": "ord_", "pad": 4 },
                { "name": "email", "type": "email" },
                { "name": "total_usd", "type": "decimal", "min": 1, "max": 500 } ] }
+```
+
+Related tables in one call: pass `tables` instead of `columns` (it calls `POST /v1/dataset`). A column
+`{"name": "customer_id", "type": "ref", "table": "customers", "column": "id"}` takes its values from the primary key
+generated for an earlier table in the same call, so the keys agree; refs resolve only inside the request and nothing
+is stored. `format` is `sql` (CREATE TABLE and INSERTs written in the dialect common to PostgreSQL and SQLite 3.23 or later; the tests execute it in SQLite, not in PostgreSQL) or `json`; at most
+10 tables and 500 rows in total. The result adds `Rows sha256 per table`, the same for the SQL and the JSON form of
+one request, and the reproduce curl pins the dataset version too. Example call (the tool's arguments):
+```json
+{"seed":42,"format":"sql","tables":[{"name":"customers","rows":3,"columns":[{"name":"id","type":"uuid"},{"name":"email","type":"email"}]},{"name":"orders","rows":5,"columns":[{"name":"id","type":"sequence"},{"name":"customer_id","type":"ref","table":"customers","column":"id"},{"name":"total","type":"decimal","min":5,"max":500}]}]}
 ```
 
 ## GitHub Action: fixtures in CI

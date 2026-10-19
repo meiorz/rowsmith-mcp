@@ -35,8 +35,8 @@ def client(stub, **kw):
 
 
 def test_version_is_pinned_once_and_sent_in_the_user_agent():
-    assert pytest_rowsmith.__version__ == "0.1.0"
-    assert pytest_rowsmith.USER_AGENT == "pytest-rowsmith/0.1.0"
+    assert pytest_rowsmith.__version__ == "0.2.0"
+    assert pytest_rowsmith.USER_AGENT == "pytest-rowsmith/0.2.0"
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'version = { attr = "pytest_rowsmith.__version__" }' in pyproject
     assert 'dynamic = ["version"]' in pyproject
@@ -53,7 +53,7 @@ def test_request_body_and_headers(stub):
         b'"columns":[{"name":"id","type":"sequence"},{"name":"name","type":"first_name"}]}'
     )
     h = r["headers"]
-    assert h["user-agent"] == "pytest-rowsmith/0.1.0"
+    assert h["user-agent"] == "pytest-rowsmith/0.2.0"
     assert not h["user-agent"].startswith("Python-urllib")
     assert h["x-rowsmith-tool"] == "pytest"
     assert h["content-type"] == "application/json"
@@ -228,11 +228,11 @@ def test_default_timeout_is_30_seconds():
 SCHEMA = {
     "title": "User",
     "type": "object",
-    "examples": [{"email": "jane.realperson@gmail.com"}],
+    "examples": [{"email": "jane.realperson@mail.example"}],
     "x-owner": "Janet Realperson",
     "properties": {
         "id": {"type": "string", "format": "uuid"},
-        "email": {"anyOf": [{"type": "string", "format": "email"}, {"type": "null"}], "default": "jane.realperson@gmail.com"},
+        "email": {"anyOf": [{"type": "string", "format": "email"}, {"type": "null"}], "default": "jane.realperson@mail.example"},
         "default": {"type": "string", "const": "fixed", "x-faker": "name"},
         "tags": {"type": "array", "items": {"type": "string", "example": "vip"}},
     },
