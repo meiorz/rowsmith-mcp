@@ -1,0 +1,45 @@
+# Runs pytest-rowsmith's offline tests on push to main and by hand, with the publish workflow's matrix. No secrets,
+# no publish job, no OIDC token: a release tag (pytest-rowsmith-v*) is pushed only after this workflow is green on the
+# commit (cycle 7; the 0.2.0 tag failed in the publish workflow's test job). Actions are pinned to full commit SHAs.
+name: pytest-rowsmith-test
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "pytest-rowsmith/**"
+      - ".github/workflows/pytest-rowsmith-test.yml"
+      - ".github/workflows/pytest-rowsmith-publish.yml"
+  workflow_dispatch:
+permissions: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # pytest 9.1.1 requires Python >= 3.10 (PyPI metadata), so 3.9 runs pytest 8.4.2, the newest for 3.9.
+          - python: "3.9"
+            pytest: "8.4.2"
+          - python: "3.13"
+            pytest: "9.1.1"
+    defaults:
+      run:
+        working-directory: pytest-rowsmith
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the pinned pytest
+        env:
+          PYTEST_PIN: ${{ matrix.pytest }}
+        run: python -m pip install "pytest==$PYTEST_PIN"
+      - name: Offline tests (the live test is deselected without ROWSMITH_LIVE=1)
+        run: PYTHONPATH=src python -m pytest -q -p no:cacheprovider -W error

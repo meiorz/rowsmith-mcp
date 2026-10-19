@@ -1,6 +1,7 @@
 // Offline tests: fetch is replaced, so nothing reaches the live service and no call record is created.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -283,8 +284,11 @@ test("the schema argument passes through the MCP client unchanged apart from the
   assert.match(out.content.at(-1).text, /Schema mapping 1; every property mapped\./);
 });
 
-test("the published tool-definition sizes match the measurement (characters / 4), for 3 and 5 tools", async () => {
-  const docs = await readFile(new URL("../../src/agentdocs.ts", import.meta.url), "utf8");
+// src/agentdocs.ts and the root README live in the private monorepo; the public repo (a copy of mcp/) has neither.
+const AGENTDOCS = new URL("../../src/agentdocs.ts", import.meta.url);
+const inMonorepo = existsSync(AGENTDOCS);
+test("the published tool-definition sizes match the measurement (characters / 4), for 3 and 5 tools", { skip: inMonorepo ? false : "needs ../../src/agentdocs.ts, which exists only in the private monorepo" }, async () => {
+  const docs = await readFile(AGENTDOCS, "utf8");
   for (const [sandbox, suffix, tools] of [[false, "", 3], [true, "_WITH_SANDBOX", 5]]) {
     const m = await measureTools({ sandbox });
     assert.equal(m.tools, tools);
