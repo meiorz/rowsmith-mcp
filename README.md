@@ -1,5 +1,19 @@
 # rowsmith-mcp
 
+```sh
+curl -s https://testdata-api.re-jam620.workers.dev/v1/generate -H 'content-type: application/json' \
+  -d '{"rows":20,"seed":42,"format":"csv","columns":[{"name":"order_id","type":"sequence","prefix":"ord_","pad":4},{"name":"email","type":"email"},{"name":"total_usd","type":"decimal","min":1,"max":500}]}'
+```
+First lines of the output (20 rows):
+```csv
+order_id,email,total_usd
+ord_0001,amara.weber561@mail.test,230.25
+ord_0002,maya.wang873@mail.test,17.04
+```
+Works in: [pytest](https://github.com/meiorz/rowsmith-mcp/tree/main/pytest-rowsmith), [Playwright](https://github.com/meiorz/rowsmith-mcp/tree/main/examples/playwright), [dbt](https://github.com/meiorz/rowsmith-mcp/tree/main/examples/dbt), [Postgres](https://github.com/meiorz/rowsmith-mcp/tree/main/examples/postgres)
+
+[![pytest-rowsmith-test](https://github.com/meiorz/rowsmith-mcp/actions/workflows/pytest-rowsmith-test.yml/badge.svg)](https://github.com/meiorz/rowsmith-mcp/actions/workflows/pytest-rowsmith-test.yml) [![playwright-smoke](https://github.com/meiorz/rowsmith-mcp/actions/workflows/playwright-smoke.yml/badge.svg)](https://github.com/meiorz/rowsmith-mcp/actions/workflows/playwright-smoke.yml) [![dbt-smoke](https://github.com/meiorz/rowsmith-mcp/actions/workflows/dbt-smoke.yml/badge.svg)](https://github.com/meiorz/rowsmith-mcp/actions/workflows/dbt-smoke.yml) [![postgres-smoke](https://github.com/meiorz/rowsmith-mcp/actions/workflows/postgres-smoke.yml/badge.svg)](https://github.com/meiorz/rowsmith-mcp/actions/workflows/postgres-smoke.yml) [![rowsmith-mcp-test](https://github.com/meiorz/rowsmith-mcp/actions/workflows/rowsmith-mcp-test.yml/badge.svg)](https://github.com/meiorz/rowsmith-mcp/actions/workflows/rowsmith-mcp-test.yml) [![License: MIT](https://img.shields.io/github/license/meiorz/rowsmith-mcp)](https://github.com/meiorz/rowsmith-mcp/blob/main/LICENSE)
+
 An MCP server for **Rowsmith**: fake test data (CSV, JSON or SQL INSERTs) generated from a table schema.
 It is a thin client of the public Rowsmith API, free and rate-limited.
 
