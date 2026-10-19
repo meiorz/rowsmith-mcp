@@ -1,0 +1,13 @@
+{
+  "name": "rowsmith-playwright-example",
+  "private": true,
+  "description": "Playwright tests fed by Rowsmith fake test data (copy-paste example).",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

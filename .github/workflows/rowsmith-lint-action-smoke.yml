@@ -1,0 +1,58 @@
+# Smoke test of the rowsmith-lint Action from this checkout (uses: ./rowsmith-lint). The planted file is written at run
+# time, never committed: one email address on a non-reserved domain and one Luhn-valid card number with a non-Stripe
+# prefix (check digit computed here), split so no real-looking value sits in the repository. The Action must fail on
+# it with exactly 2 findings, and must pass on a clean fixture. No network, no install, no publish; contents read only.
+name: rowsmith-lint-action-smoke
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "rowsmith-lint/**"
+      - ".github/workflows/rowsmith-lint-action-smoke.yml"
+  workflow_dispatch:
+permissions: {}
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Write the planted and the clean fixtures (outside the repository's tracked files)
+        run: |
+          mkdir -p smoke-run/planted/fixtures smoke-run/clean/fixtures
+          node -e '
+            const digits = "4716923841120" + "13"; // 15 digits, a non-Stripe Visa-shaped prefix
+            let sum = 0;
+            for (let i = 0; i < digits.length; i++) {
+              let d = Number(digits[digits.length - 1 - i]);
+              if (i % 2 === 0) { d *= 2; if (d > 9) d -= 9; }
+              sum += d;
+            }
+            const card = digits + String((10 - (sum % 10)) % 10);
+            const email = ["jane", "doe"].join(".") + "@" + ["acme-mail", "co"].join(".");
+            require("fs").writeFileSync("smoke-run/planted/fixtures/customers.csv", "name,email,card\nJane," + email + "," + card + "\n");
+            require("fs").writeFileSync("smoke-run/clean/fixtures/customers.csv", "name,email,card\nJane,jane@example.com,4242424242424242\n");
+          '
+      - name: The Action on the planted fixture (expected to fail)
+        id: planted
+        continue-on-error: true
+        uses: ./rowsmith-lint
+        with:
+          path: smoke-run/planted
+      - name: Assert it failed with exactly 2 findings
+        env:
+          OUTCOME: ${{ steps.planted.outcome }}
+        run: |
+          test "$OUTCOME" = "failure" || { echo "::error::expected failure, got $OUTCOME"; exit 1; }
+          n="$(node rowsmith-lint/bin/rowsmith-lint.js --format json --fail-on none -- smoke-run/planted | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>console.log(JSON.parse(s).findings.length))')"
+          echo "findings: $n"
+          test "$n" = "2" || { echo "::error::expected 2 findings, got $n"; exit 1; }
+      - name: The Action on the clean fixture (expected to pass)
+        uses: ./rowsmith-lint
+        with:
+          path: smoke-run/clean

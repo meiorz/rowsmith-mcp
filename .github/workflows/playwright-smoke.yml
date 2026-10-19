@@ -1,0 +1,41 @@
+# Runs the Playwright example's data-only spec against a local stub that serves the Worker's recorded answer
+# (examples/playwright/fixtures/golden-json.json, checked against the handler by the service's own tests), so it makes
+# no call to the service and needs no browser. Run by hand only; no secrets. Actions pinned to full commit SHAs.
+name: playwright-smoke
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  playwright:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: examples/playwright
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Node version (>= 20)
+        run: |
+          node --version
+          node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)'
+      - name: Install the locked @playwright/test without lifecycle scripts (no browser download)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Start the local stub (127.0.0.1 only)
+        run: |
+          node stub-server.mjs > stub.log 2>&1 &
+          for i in $(seq 1 20); do grep -q "stub on" stub.log && break; sleep 0.5; done
+          cat stub.log
+      - name: Data spec against the stub; the form spec is skipped without a browser
+        env:
+          ROWSMITH_URL: http://127.0.0.1:8787
+        run: npx playwright test data.spec.ts form.spec.ts
+      - name: The second run is answered from the cache (the stub is stopped)
+        env:
+          ROWSMITH_URL: http://127.0.0.1:9
+        run: |
+          pkill -f stub-server.mjs || true
+          npx playwright test data.spec.ts
