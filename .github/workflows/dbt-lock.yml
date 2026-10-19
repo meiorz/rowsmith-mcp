@@ -1,0 +1,49 @@
+# Produces examples/dbt/requirements.txt, with hashes, from examples/dbt/requirements.in, and uploads it as the
+# dbt-requirements artifact for a maintainer to commit (this workflow commits nothing). pip-tools runs in a
+# throwaway venv with pip and pip-tools pinned to exact versions, and resolves wheels only, so no package's build
+# backend runs here. Run by hand only; no secrets. Actions pinned to full commit SHAs.
+name: dbt-lock
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: examples/dbt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Throwaway venv with the pinned pip and pip-tools (wheels only)
+        run: |
+          python -m venv "$RUNNER_TEMP/lock-venv"
+          "$RUNNER_TEMP/lock-venv/bin/python" -m pip install --only-binary :all: pip==26.2.1 pip-tools==7.6.1
+      - name: Compile requirements.txt with hashes (wheels only, as the smoke installs)
+        run: |
+          "$RUNNER_TEMP/lock-venv/bin/pip-compile" --generate-hashes --strip-extras --allow-unsafe \
+            --pip-args "--only-binary :all:" -o requirements.txt requirements.in
+      - name: Write the sha256 of requirements.txt and the pinned versions to the job summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### examples/dbt/requirements.txt"
+            echo '```'
+            sha256sum requirements.txt
+            grep -E '^[A-Za-z0-9_.-]+==' requirements.txt
+            "$RUNNER_TEMP/lock-venv/bin/python" -c 'import importlib.metadata as m; [print(p, m.version(p)) for p in ("pip", "pip-tools")]'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dbt-requirements
+          path: examples/dbt/requirements.txt
+          if-no-files-found: error

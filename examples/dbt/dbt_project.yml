@@ -1,0 +1,18 @@
+# A seeds-only dbt project: the seeds are Rowsmith's generated rows (seeds/, refreshed by fetch_seeds.py), loaded
+# into a local DuckDB file. Run from this folder: dbt seed --profiles-dir . && dbt run --profiles-dir . && dbt test --profiles-dir .
+name: rowsmith_dbt
+version: "0.1.0"
+config-version: 2
+profile: rowsmith_dbt
+
+seed-paths: ["seeds"]
+model-paths: ["models"]
+test-paths: ["tests"]
+clean-targets: ["target", "logs"]
+
+flags:
+  send_anonymous_usage_stats: false
+
+models:
+  rowsmith_dbt:
+    +materialized: view

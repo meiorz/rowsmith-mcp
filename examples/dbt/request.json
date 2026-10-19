@@ -1,0 +1,24 @@
+{
+  "seed": 42,
+  "format": "json",
+  "version": "1",
+  "tables": [
+    {
+      "name": "customers",
+      "rows": 10,
+      "columns": [
+        { "name": "id", "type": "uuid" },
+        { "name": "email", "type": "email" }
+      ]
+    },
+    {
+      "name": "orders",
+      "rows": 25,
+      "columns": [
+        { "name": "id", "type": "sequence" },
+        { "name": "customer_id", "type": "ref", "table": "customers", "column": "id" },
+        { "name": "total", "type": "decimal", "min": 5, "max": 500 }
+      ]
+    }
+  ]
+}

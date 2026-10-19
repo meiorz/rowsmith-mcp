@@ -1,0 +1,8 @@
+# DuckDB in a local file next to this project; no server, no credentials.
+rowsmith_dbt:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: rowsmith.duckdb
+      threads: 1

@@ -1,0 +1,39 @@
+version: 2
+
+seeds:
+  - name: customers
+    description: Generated customers (fake data; emails on reserved domains).
+    config:
+      column_types:
+        id: varchar
+        email: varchar
+    columns:
+      - name: id
+        data_tests:
+          - not_null
+          - unique
+      - name: email
+        data_tests:
+          - not_null
+
+  - name: orders
+    description: Generated orders; customer_id refers to customers.id within the same Rowsmith call.
+    config:
+      column_types:
+        id: bigint
+        customer_id: varchar
+        total: decimal(10, 2)
+    columns:
+      - name: id
+        data_tests:
+          - not_null
+          - unique
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('customers')
+              field: id
+      - name: total
+        data_tests:
+          - not_null

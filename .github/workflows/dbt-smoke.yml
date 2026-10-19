@@ -1,0 +1,53 @@
+# Runs the dbt example (examples/dbt) against DuckDB from the committed golden seeds (seeds/*.csv, the Worker's
+# recorded answer converted to CSV, checked against the handler by the service's own tests), so it makes no call to
+# the service: fetch_seeds.py is not run, and the only network use is the install from PyPI. Run by hand only; no
+# secrets. Actions pinned to full commit SHAs.
+#
+# It fails at "requirements.txt is committed" until examples/dbt/requirements.txt exists: the dbt-lock workflow
+# produces it (with hashes) as an artifact, and a maintainer commits it.
+name: dbt-smoke
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  dbt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: examples/dbt
+    env:
+      DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Check the committed seeds against the sha256 in seeds/manifest.json
+        run: |
+          python3 - <<'EOF'
+          import hashlib, json, pathlib
+          m = json.loads(pathlib.Path("seeds/manifest.json").read_text(encoding="utf-8"))
+          for name, want in m["seeds-sha256"].items():
+              got = hashlib.sha256(pathlib.Path("seeds", name).read_bytes()).hexdigest()
+              print(name, got, "recorded", want)
+              assert got == want, f"seeds/{name} does not match seeds/manifest.json"
+          EOF
+      - name: requirements.txt is committed
+        run: |
+          test -f requirements.txt || { echo "::error::examples/dbt/requirements.txt is missing; run the dbt-lock workflow and commit its artifact"; exit 1; }
+      - name: Install the hashed requirements in a venv (wheels only)
+        run: |
+          python -m venv "$RUNNER_TEMP/dbt-venv"
+          "$RUNNER_TEMP/dbt-venv/bin/python" -m pip install --require-hashes --only-binary :all: -r requirements.txt
+          "$RUNNER_TEMP/dbt-venv/bin/python" -c 'import importlib.metadata as m; [print(p, m.version(p)) for p in ("dbt-core", "dbt-duckdb", "duckdb")]'
+      - name: dbt seed
+        run: '"$RUNNER_TEMP/dbt-venv/bin/dbt" seed --profiles-dir .'
+      - name: dbt run (the model orders_with_customers, which the singular test reads)
+        run: '"$RUNNER_TEMP/dbt-venv/bin/dbt" run --profiles-dir .'
+      - name: dbt test (not_null, unique, relationships orders.customer_id -> customers.id, every order has a customer)
+        run: '"$RUNNER_TEMP/dbt-venv/bin/dbt" test --profiles-dir .'

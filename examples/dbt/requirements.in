@@ -1,0 +1,5 @@
+# Pinned exact versions (released 2026-09-08 and 2026-08-07). requirements.txt, with hashes, is produced from this
+# file by the dbt-lock workflow (pip-compile --generate-hashes); install with
+#   pip install --require-hashes --only-binary :all: -r requirements.txt
+dbt-core==1.11.15
+dbt-duckdb==1.11.0

@@ -11,6 +11,7 @@ never real data.
 | `postgres/` | seed a local table from `format: sql` INSERTs |
 | `payment-sandbox/` | a checkout test: one charge that succeeds (201), one that is declined (422) |
 | `github-actions/` | the fixtures Action writing a file before `npm test` |
+| `dbt/` | a seeds-only dbt project on DuckDB: related customers and orders from `/v1/dataset`, with `relationships` tests |
 
 Pin `"version"` in the request to keep the bytes fixed when the generator changes. A pinned version is served as long as the service runs; a retired version answers 409. A version's output is not changed in place: a golden test checks its bytes on every build.
 

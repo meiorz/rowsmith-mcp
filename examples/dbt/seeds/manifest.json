@@ -1,0 +1,58 @@
+{
+  "note": "Rowsmith's answer to request.json (POST /v1/dataset, JSON form), converted to one CSV per table by fetch_seeds.py; test/dbt-seeds.test.ts checks these files against the handler.",
+  "request": {
+    "seed": 42,
+    "format": "json",
+    "version": "1",
+    "tables": [
+      {
+        "name": "customers",
+        "rows": 10,
+        "columns": [
+          {
+            "name": "id",
+            "type": "uuid"
+          },
+          {
+            "name": "email",
+            "type": "email"
+          }
+        ]
+      },
+      {
+        "name": "orders",
+        "rows": 25,
+        "columns": [
+          {
+            "name": "id",
+            "type": "sequence"
+          },
+          {
+            "name": "customer_id",
+            "type": "ref",
+            "table": "customers",
+            "column": "id"
+          },
+          {
+            "name": "total",
+            "type": "decimal",
+            "min": 5,
+            "max": 500
+          }
+        ]
+      }
+    ]
+  },
+  "x-generator-version": "1",
+  "x-dataset-version": "1",
+  "x-request-sha256": "cd98f24bdd0450c00e2939ffc77015e31a27a0da7637521eab289bb98a6efdb8",
+  "x-output-sha256": "c7f51222f62f26e89274c49342e2b0345f00319079170fa91d8fb8bae62ca10d",
+  "x-dataset-rows-sha256": {
+    "customers": "8c7548ea05648df1e3d0ba0d80ef88e1017258a08856b517c077d68fcca9cb5b",
+    "orders": "69f31e44f8a5714114a734bc95b6cc71e8a276f1a2c7067aa93b81f48a20a4d2"
+  },
+  "seeds-sha256": {
+    "customers.csv": "a8f8361316c2c24ebba61da56c8892e2209f7504e43d6b463ee599390f7c8806",
+    "orders.csv": "e1e5aa56f2c01a51363ea7f3fb31fa7a81116b4f00e87089fad20faf47e1aff2"
+  }
+}
