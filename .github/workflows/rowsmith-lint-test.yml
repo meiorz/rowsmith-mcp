@@ -1,0 +1,34 @@
+# Runs rowsmith-lint's tests (offline; test/no-network.test.js checks it makes no network call) on push to main and by
+# hand. No secrets and no publish step: an npm publish and its rowsmith-lint-v* tag follow only after this workflow is
+# green on the commit (cycle 7). Uses the runner's preinstalled Node (>= 20, printed below); actions pinned to full SHAs.
+name: rowsmith-lint-test
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "rowsmith-lint/**"
+      - ".github/workflows/rowsmith-lint-test.yml"
+  workflow_dispatch:
+permissions: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: rowsmith-lint
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Node version (engines requires >= 20)
+        run: |
+          node --version
+          node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)'
+      - name: Tests
+        run: npm test
+      - name: The published package's files and shasum
+        run: npm pack --dry-run 2>&1 | grep -E "shasum|total files"

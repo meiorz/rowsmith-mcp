@@ -1,0 +1,33 @@
+{
+  "name": "rowsmith-lint",
+  "version": "0.1.0",
+  "description": "Local fixture linter: flags values in test fixtures and seed files that look like real emails, card numbers, phone numbers and US Social Security numbers, and suggests Rowsmith column types. Sends nothing anywhere.",
+  "author": "meiorz",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "rowsmith-lint": "bin/rowsmith-lint.js"
+  },
+  "exports": "./lib/index.js",
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meiorz/rowsmith-mcp.git",
+    "directory": "rowsmith-lint"
+  },
+  "bugs": {
+    "url": "https://github.com/meiorz/rowsmith-mcp/issues"
+  },
+  "keywords": ["fixtures", "test-data", "lint", "ci"]
+}

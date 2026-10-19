@@ -1,0 +1,47 @@
+name: rowsmith-lint
+description: Flags values in test fixtures and seed files that look like real emails, card numbers, phone numbers and US Social Security numbers. Runs on the runner and sends nothing anywhere.
+author: meiorz
+branding:
+  icon: check-square
+  color: green
+# Needs only `permissions: contents: read` in the calling workflow (to check out the code). It uses no token, makes
+# no network request, uploads nothing and creates no artifacts. Inputs reach the script through env only.
+inputs:
+  path:
+    description: Directory (or file) to scan, relative to the workspace.
+    required: false
+    default: "."
+  include:
+    description: Globs of files to scan, one per line. Empty uses the default fixture globs.
+    required: false
+    default: ""
+  exclude:
+    description: Globs of files to skip, one per line.
+    required: false
+    default: ""
+  fail-on:
+    description: findings (fail the step when there are findings) or none (report only).
+    required: false
+    default: findings
+runs:
+  using: composite
+  steps:
+    - id: lint
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_INCLUDE: ${{ inputs.include }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        set -euo pipefail
+        args=(--format github --fail-on "${INPUT_FAIL_ON:-findings}")
+        while IFS= read -r glob; do
+          glob="${glob%$'\r'}"
+          if [ -n "$glob" ]; then args+=(--include "$glob"); fi
+        done <<< "${INPUT_INCLUDE:-}"
+        while IFS= read -r glob; do
+          glob="${glob%$'\r'}"
+          if [ -n "$glob" ]; then args+=(--exclude "$glob"); fi
+        done <<< "${INPUT_EXCLUDE:-}"
+        node "$GITHUB_ACTION_PATH/bin/rowsmith-lint.js" "${args[@]}" -- "${INPUT_PATH:-.}"

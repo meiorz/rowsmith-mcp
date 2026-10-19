@@ -111,8 +111,8 @@ Example call:
 Related tables in one call: pass `tables` instead of `columns` (it calls `POST /v1/dataset`). A column
 `{"name": "customer_id", "type": "ref", "table": "customers", "column": "id"}` takes its values from the primary key
 generated for an earlier table in the same call, so the keys agree; refs resolve only inside the request and nothing
-is stored. `format` is `sql` (CREATE TABLE and INSERTs written in the dialect common to PostgreSQL and SQLite 3.23 or later; the tests execute it in SQLite, not in PostgreSQL) or `json`; at most
-10 tables and 500 rows in total. The result adds `Rows sha256 per table`, the same for the SQL and the JSON form of
+is stored. `format` is `sql` (CREATE TABLE and INSERTs) or `json`; at most 10 tables and 500 rows in total.
+Written in the dialect common to PostgreSQL and SQLite 3.23 or later; CI executes it in SQLite with foreign keys enforced and in PostgreSQL 16. The result adds `Rows sha256 per table`, the same for the SQL and the JSON form of
 one request, and the reproduce curl pins the dataset version too. Example call (the tool's arguments):
 ```json
 {"seed":42,"format":"sql","tables":[{"name":"customers","rows":3,"columns":[{"name":"id","type":"uuid"},{"name":"email","type":"email"}]},{"name":"orders","rows":5,"columns":[{"name":"id","type":"sequence"},{"name":"customer_id","type":"ref","table":"customers","column":"id"},{"name":"total","type":"decimal","min":5,"max":500}]}]}

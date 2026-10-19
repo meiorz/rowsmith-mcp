@@ -1,0 +1,40 @@
+{
+  "about": "Shared card-detector corpus. rowsmith-lint (test/cards.test.js) and the Rowsmith Worker (testdata-api test/lint-parity.test.ts, containsCardNumber in src/cards.ts) must both give each case's verdict. Change both detectors together.",
+  "stripe_list_as_of": "2026-10-17",
+  "stripe_list_note": "Card numbers from Stripe's published testing list as held by the Worker (TEST_CARDS in src/reserved.ts plus DECLINE_CARDS in src/cards.ts); the date is when that list last changed in the Worker repo. Stripe does not version its testing page.",
+  "stripe_test_cards": [
+    "4242424242424242", "4000056655665556", "5555555555554444", "2223003122003222", "5200828282828210",
+    "378282246310005", "371449635398431", "6011111111111117", "3056930009020004", "3566002020360505",
+    "4000000000000002", "4000000000009995", "4000000000009987", "4000000000009979", "4000000000006975",
+    "4100000000000019", "4000000000000069", "4000000000000127", "4000000000000119", "4242424242424241"
+  ],
+  "expand": "{L:DIGITS} is DIGITS plus their Luhn check digit; {L:DIGITS:SEP} is the same in groups of 4 joined by SEP; {LW:DIGITS} is {L:DIGITS} in full-width digits. Card-like numbers are built at test time, so this file holds none.",
+  "cases": [
+    { "text": "{L:453201511283036}", "card": true, "note": "16 digits, MII 4, Luhn valid" },
+    { "text": "card={L:453201511283036: }", "card": true, "note": "groups of 4, space" },
+    { "text": "{L:453201511283036:-}", "card": true, "note": "groups of 4, dash" },
+    { "text": "{L:453201511283036:, }", "card": true, "note": "two-character separator" },
+    { "text": "{L:453201511283036: - }", "card": false, "note": "space-dash-space is three characters, so it splits the run" },
+    { "text": "{L:453201511283036:   }", "card": false, "note": "three spaces split the run" },
+    { "text": "{L:453201511283036:,}", "card": true, "note": "comma groups" },
+    { "text": "{L:453201511283036:​}", "card": true, "note": "zero-width space is removed first" },
+    { "text": "{LW:453201511283036}", "card": true, "note": "full-width digits fold to ASCII" },
+    { "text": "1, {L:453201511283036: }", "card": true, "note": "whole groups inside a longer same-separator stretch" },
+    { "text": "99{L:453201511283036}99", "card": true, "note": "window inside a 20-digit run" },
+    { "text": "{L:34000000000001}", "card": true, "note": "15 digits, MII 3" },
+    { "text": "{L:400000000000}", "card": true, "note": "13 digits" },
+    { "text": "{L:622126000000000001}", "card": true, "note": "19 digits" },
+    { "text": "{L:45320151128}", "card": false, "note": "12 digits" },
+    { "text": "{L:712345678901234}", "card": false, "note": "MII 7" },
+    { "text": "{L:37828224631000}", "card": false, "note": "expands to a Stripe test number" },
+    { "text": "4532015112830367", "card": false, "note": "Luhn invalid" },
+    { "text": "4242 4242 4242 4242", "card": false, "note": "Stripe test number, spaced" },
+    { "text": "4000-0000-0000-0002", "card": false, "note": "Stripe decline test number" },
+    { "text": "4111 1111-1111 1111", "card": false, "note": "separator changes, so no stretch reaches 13 digits" },
+    { "text": "1697000000000", "card": false, "note": "Unix ms timestamp, MII 1" },
+    { "text": "978-0-306-40615-7", "card": false, "note": "ISBN-13, MII 9" },
+    { "text": "40.712776, -74.005974", "card": false, "note": "coordinates: separator changes" },
+    { "text": "no digits here", "card": false, "note": "no digits" },
+    { "text": "", "card": false, "note": "empty" }
+  ]
+}
