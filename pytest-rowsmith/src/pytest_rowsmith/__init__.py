@@ -21,7 +21,7 @@ import urllib.request
 from http.client import HTTPException
 
 # The one place the version is set. pyproject.toml reads it from here, and the User-Agent carries it.
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 DEFAULT_URL = "https://testdata-api.re-jam620.workers.dev"
 USER_AGENT = "pytest-rowsmith/" + __version__

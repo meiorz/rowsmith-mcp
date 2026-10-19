@@ -35,8 +35,8 @@ def client(stub, **kw):
 
 
 def test_version_is_pinned_once_and_sent_in_the_user_agent():
-    assert pytest_rowsmith.__version__ == "0.2.0"
-    assert pytest_rowsmith.USER_AGENT == "pytest-rowsmith/0.2.0"
+    assert pytest_rowsmith.__version__ == "0.2.1"
+    assert pytest_rowsmith.USER_AGENT == "pytest-rowsmith/0.2.1"
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'version = { attr = "pytest_rowsmith.__version__" }' in pyproject
     assert 'dynamic = ["version"]' in pyproject
@@ -53,7 +53,7 @@ def test_request_body_and_headers(stub):
         b'"columns":[{"name":"id","type":"sequence"},{"name":"name","type":"first_name"}]}'
     )
     h = r["headers"]
-    assert h["user-agent"] == "pytest-rowsmith/0.2.0"
+    assert h["user-agent"] == "pytest-rowsmith/0.2.1"
     assert not h["user-agent"].startswith("Python-urllib")
     assert h["x-rowsmith-tool"] == "pytest"
     assert h["content-type"] == "application/json"

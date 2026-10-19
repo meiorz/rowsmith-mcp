@@ -170,10 +170,21 @@ def test_the_fixture_builds_sqlite_files_in_pytests_tmp_path_and_caches_the_sql(
     pytester.runpytest("-p", "pytest_rowsmith.plugin", "--basetemp", str(base)).assert_outcomes(passed=1)  # offline
 
 
-def test_the_readme_example_runs_against_the_fixture(stub, tmp_path):
+def test_the_readme_example_runs_against_the_fixture(stub, tmp_path, monkeypatch):
     readme = (pathlib.Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
-    start = readme.index("```python\nimport sqlite3\n\nSHOP = [")
+    start = readme.index("```python\nimport contextlib\nimport sqlite3\n\nSHOP = [")
     code = readme[start + len("```python\n"):readme.index("```", start + 10)]
+    # The example must close what it opens: an unclosed connection raises ResourceWarning when collected (Python
+    # 3.13+), which -W error turns into a failure in whichever later test the collector runs in (run 39179422965).
+    opened = []
+    real_connect = sqlite3.connect
+
+    def tracking_connect(*args, **kwargs):
+        con = real_connect(*args, **kwargs)
+        opened.append(con)
+        return con
+
+    monkeypatch.setattr(sqlite3, "connect", tracking_connect)
     ns = {}
     exec(compile(code, "README.md", "exec"), ns)
     assert ns["SHOP"] == TABLES
@@ -181,3 +192,7 @@ def test_the_readme_example_runs_against_the_fixture(stub, tmp_path):
     d = tmp_path / "r"
     d.mkdir()
     ns["test_orders_join_customers"](client(stub, tmp_dir=lambda: d))
+    assert len(opened) >= 1
+    for con in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            con.execute("SELECT 1")  # a closed connection refuses this

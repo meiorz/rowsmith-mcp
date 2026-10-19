@@ -22,9 +22,9 @@ of use (https://testdata-api.re-jam620.workers.dev/terms) and count against your
 ```sh
 pip install pytest-rowsmith
 ```
-Or from the public repository at the plugin's release tag pytest-rowsmith-v0.2.0:
+Or from the public repository at the plugin's release tag pytest-rowsmith-v0.2.1:
 ```sh
-pip install "git+https://github.com/meiorz/rowsmith-mcp@pytest-rowsmith-v0.2.0#subdirectory=pytest-rowsmith"
+pip install "git+https://github.com/meiorz/rowsmith-mcp@pytest-rowsmith-v0.2.1#subdirectory=pytest-rowsmith"
 ```
 The install from the repository needs git and network access to PyPI for the build tool (setuptools); nothing is
 compiled. pytest loads the plugin automatically. Python 3.9 or later.
@@ -121,6 +121,7 @@ asks for the SQL and builds a new `.sqlite` file from it with the standard libra
 path, with foreign keys enforced and checked, and returns its path. The service sends text only; the file is built
 on your machine.
 ```python
+import contextlib
 import sqlite3
 
 SHOP = [
@@ -131,8 +132,8 @@ SHOP = [
 ]
 
 def test_orders_join_customers(rowsmith):
-    db = sqlite3.connect(str(rowsmith.sqlite(SHOP, seed=42)))
-    assert db.execute("SELECT COUNT(*) FROM orders JOIN customers ON customers.id = orders.customer_id").fetchone()[0] == 5
+    with contextlib.closing(sqlite3.connect(str(rowsmith.sqlite(SHOP, seed=42)))) as db:
+        assert db.execute("SELECT COUNT(*) FROM orders JOIN customers ON customers.id = orders.customer_id").fetchone()[0] == 5
 ```
 - Refs resolve only inside the request: tables come in dependency order, and a ref to a later or unknown table, or
   to a column that is not the primary key, is refused with the service's `next` step in the `RowsmithError`.
