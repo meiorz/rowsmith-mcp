@@ -1,0 +1,50 @@
+# Loads the documented /v1/dataset example into Postgres 16 and checks it (examples/postgres/dataset-check.sql), so the
+# shared SQL dialect is proven on Postgres as well as SQLite. It uses the Worker's recorded answer
+# (pytest-rowsmith/tests/fixtures/dataset_example.json, which the service's own tests check against the handler), so it
+# makes no call to the service and counts against no quota. Run by hand only; no secrets. Actions pinned to full SHAs.
+name: postgres-smoke
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: smoke-only-not-a-secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: smoke-only-not-a-secret
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Write the recorded dataset SQL and check its sha256 against the recorded X-Output-SHA256
+        run: |
+          python3 - <<'EOF'
+          import hashlib, json
+          d = json.load(open("pytest-rowsmith/tests/fixtures/dataset_example.json", encoding="utf-8"))
+          body = d["sql"]["body"].encode("utf-8")
+          want = d["sql"]["headers"].get("x-output-sha256")
+          got = hashlib.sha256(body).hexdigest()
+          print("sha256", got, "recorded", want)
+          assert want is None or got == want, "fixture body does not match its recorded X-Output-SHA256"
+          open("dataset.sql", "wb").write(body)
+          EOF
+      - name: Postgres version
+        run: psql -tAc 'SELECT version()'
+      - name: Load the dataset SQL
+        run: psql -v ON_ERROR_STOP=1 -q -f dataset.sql
+      - name: Check row counts, orphans and the enforced foreign key
+        run: psql -v ON_ERROR_STOP=1 -f examples/postgres/dataset-check.sql
