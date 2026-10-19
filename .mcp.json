@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "rowsmith": {
+      "command": "npx",
+      "args": ["-y", "rowsmith-mcp@0.5.0"]
+    }
+  }
+}

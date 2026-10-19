@@ -1,0 +1,11 @@
+{
+  "name": "rowsmith",
+  "displayName": "Rowsmith",
+  "version": "0.5.0",
+  "description": "Fake test data from a schema: CSV, JSON or SQL, reproducible by seed. Free and rate-limited.",
+  "author": {
+    "name": "meiorz"
+  },
+  "license": "MIT",
+  "keywords": ["mcp", "test-data", "fixtures", "fake-data", "csv", "sql", "json"]
+}
