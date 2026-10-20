@@ -1,5 +1,7 @@
 # pytest-rowsmith
 
+Fixtures that run offline after the first run: pytest-rowsmith caches each answer in .pytest_cache, keyed by the canonical request with the output version pinned, so tests reach the network only on a cache miss (in CI, keep .pytest_cache between runs) and the data does not change when you upgrade.
+
 A pytest plugin with one fixture, `rowsmith`, that gives your tests reproducible fake test data (CSV, JSON or
 SQL INSERTs) generated from a table schema by the Rowsmith API.
 

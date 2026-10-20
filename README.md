@@ -1,5 +1,7 @@
 # rowsmith-mcp
 
+Seeded test data that does not change when you upgrade: pin the output version, and Rowsmith returns the same bytes for the same request and seed for as long as the service runs, checked by a golden test on every build. Fake test data from a schema, reproducible by seed. Free, no key. CSV, JSON or SQL, plus an MCP server for your agent.
+
 ```sh
 curl -s https://testdata-api.re-jam620.workers.dev/v1/generate -H 'content-type: application/json' \
   -d '{"rows":20,"seed":42,"format":"csv","columns":[{"name":"order_id","type":"sequence","prefix":"ord_","pad":4},{"name":"email","type":"email"},{"name":"total_usd","type":"decimal","min":1,"max":500}]}'
