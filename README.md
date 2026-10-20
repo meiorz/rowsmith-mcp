@@ -35,6 +35,7 @@ It is a thin client of the public Rowsmith API, free and rate-limited.
    Python's standard-library urllib is blocked by Cloudflare before it reaches the API (403, error code 1010) when it sends its default User-Agent. Set your own, e.g. `User-Agent: my-tests/1.0`. In our tests on 2026-10-18, requests, httpx, aiohttp, Node and curl worked with their defaults.
 
 - Free, rate-limited, no account, no API key.
+- Paid plans with higher limits (Pro, Team): https://testdata-api.re-jam620.workers.dev/pricing. The free tier stays.
 - The same schema and seed give byte-identical output for the same generator version.
 - An invalid-values catalogue with the reason each value is invalid.
 - A payment sandbox that never moves money: a sandbox and everything in it is deleted 1 hour after it is created. It accepts only card numbers from Stripe's published testing list and stores no free text you send.
