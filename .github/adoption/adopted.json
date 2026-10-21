@@ -1,0 +1,35 @@
+{
+  "about": "Expected sha256 of Rowsmith's public pages. The canary workflow checks them every hour; a mismatch means a page changed since its last recorded review.",
+  "pages": [
+    {
+      "path": "/terms",
+      "sha256": "69246f84ca4bc31c9a5f96ea4aa705c81c61048712904c5aa0663af95fba6434",
+      "status": "reviewed"
+    },
+    {
+      "path": "/privacy",
+      "sha256": "7067d54d86223b5fb8eead7886bccc9ef0766f16834dc20e59b4e0da537f62ea",
+      "status": "reviewed"
+    },
+    {
+      "path": "/terms-of-sale",
+      "sha256": "75a73602e2438cef4c9b8d18cc56b97ba38d10dde61948a155aca4e3ca1174f4",
+      "status": "reviewed"
+    },
+    {
+      "path": "/pricing",
+      "sha256": "27dab49d86efb8b113107a2fc9ddc5436475d31c87f3f28430cceebf536d9340",
+      "status": "reviewed"
+    },
+    {
+      "path": "/compare",
+      "sha256": "426edff22b74ab0c6c8a365e044f0a957706f6a453de70705d63cef44b18986a",
+      "status": "reviewed"
+    },
+    {
+      "path": "/llms.txt",
+      "sha256": "6b0c72aa01c25a91c0d92e31c6619dd8ed2f5703ec2780a5458e214ee9e056c5",
+      "status": "reviewed"
+    }
+  ]
+}

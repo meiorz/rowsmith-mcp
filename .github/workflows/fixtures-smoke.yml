@@ -8,9 +8,10 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: fx
-        uses: meiorz/rowsmith-mcp/fixtures@main
+        # Pinned to the commit of the latest release tag (CSO F4); move it with each release.
+        uses: meiorz/rowsmith-mcp/fixtures@d454038172a46e273630bba34b9fca3bde7ad52d # v0.5.0
         with:
           schema: examples/quickstart-schema.json
           seed: "42"

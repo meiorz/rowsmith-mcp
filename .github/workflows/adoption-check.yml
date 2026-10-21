@@ -1,0 +1,29 @@
+# Our own check that Rowsmith's public pages (terms, privacy notice, terms of sale, pricing, comparison page, llms.txt)
+# still serve the text we last reviewed. Every hour it GETs each path in .github/adoption/adopted.json and compares the
+# sha256 of the body with the recorded one; any mismatch, HTTP error or network error (retried once) fails the job.
+# The calls send x-rowsmith-team: ci, which marks them as our own automated check: the service counts them as our own
+# traffic, not outside use, and answers exactly as it does without the header. No secrets; uses the runner's preinstalled Node.
+name: adoption-check
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: adoption-check
+  cancel-in-progress: false
+jobs:
+  pages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Node version (fetch needs >= 20)
+        run: |
+          node --version
+          node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)'
+      - name: Compare the served pages with .github/adoption/adopted.json
+        run: node .github/adoption/adoption-check.mjs https://testdata-api.re-jam620.workers.dev
