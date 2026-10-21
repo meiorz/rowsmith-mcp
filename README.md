@@ -16,6 +16,8 @@ Works in: [pytest](https://github.com/meiorz/rowsmith-mcp/tree/main/pytest-rowsm
 
 [![pytest-rowsmith-test](https://github.com/meiorz/rowsmith-mcp/actions/workflows/pytest-rowsmith-test.yml/badge.svg)](https://github.com/meiorz/rowsmith-mcp/actions/workflows/pytest-rowsmith-test.yml) [![playwright-smoke](https://github.com/meiorz/rowsmith-mcp/actions/workflows/playwright-smoke.yml/badge.svg)](https://github.com/meiorz/rowsmith-mcp/actions/workflows/playwright-smoke.yml) [![dbt-smoke](https://github.com/meiorz/rowsmith-mcp/actions/workflows/dbt-smoke.yml/badge.svg)](https://github.com/meiorz/rowsmith-mcp/actions/workflows/dbt-smoke.yml) [![postgres-smoke](https://github.com/meiorz/rowsmith-mcp/actions/workflows/postgres-smoke.yml/badge.svg)](https://github.com/meiorz/rowsmith-mcp/actions/workflows/postgres-smoke.yml) [![rowsmith-mcp-test](https://github.com/meiorz/rowsmith-mcp/actions/workflows/rowsmith-mcp-test.yml/badge.svg)](https://github.com/meiorz/rowsmith-mcp/actions/workflows/rowsmith-mcp-test.yml) [![License: MIT](https://img.shields.io/github/license/meiorz/rowsmith-mcp)](https://github.com/meiorz/rowsmith-mcp/blob/main/LICENSE)
 
+Comparing tools? [Rowsmith, Faker or Mockaroo: which to use](https://testdata-api.re-jam620.workers.dev/compare)
+
 An MCP server for **Rowsmith**: fake test data (CSV, JSON or SQL INSERTs) generated from a table schema.
 It is a thin client of the public Rowsmith API, free and rate-limited.
 
